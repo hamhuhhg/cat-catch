@@ -247,7 +247,49 @@ function findMedia(data, isRegex = false, filter = false, timer = false) {
         }
         // 发送到popup 并检查自动下载
         chrome.runtime.sendMessage({ Message: "popupAddData", data: info }, function () {
-            if (G.featAutoDownTabId.size > 0 && G.featAutoDownTabId.has(info.tabId) && chrome.downloads?.State) {
+            if (chrome.runtime.lastError) { /* globalAutoDownloadEnabled check will not run if popupAddData fails */ }
+
+            let downloadedByGlobal = false;
+            if (G.globalAutoDownloadEnabled && chrome.downloads && chrome.downloads.download) {
+                // Check against G.Ext and G.Type
+                // The CheckExtension and CheckType functions are already available in background.js
+                let typeMatch = false;
+                if (info.type) { // Ensure type is available
+                    const typeCheckResult = CheckType(info.type, info.header?.size);
+                    if (typeCheckResult === true) { // Explicitly check for true, as it can return "break"
+                        typeMatch = true;
+                    }
+                }
+
+                let extMatch = false;
+                if (info.ext) { // Ensure extension is available
+                    const extCheckResult = CheckExtension(info.ext, info.header?.size);
+                    if (extCheckResult === true) { // Explicitly check for true
+                        extMatch = true;
+                    }
+                }
+
+                if (typeMatch || extMatch) {
+                    try {
+                        const downDir = info.title == "NULL" ? "CatCatch/" : stringModify(info.title) + "/";
+                        let fileName = isEmpty(info.name) ? stringModify(info.title) + '.' + info.ext : decodeURIComponent(stringModify(info.name));
+                        if (G.TitleName) {
+                            fileName = filterFileName(templates(G.downFileName, info));
+                        } else {
+                            fileName = downDir + fileName;
+                        }
+                        chrome.downloads.download({
+                            url: info.url,
+                            filename: fileName,
+                            // Potentially add saveAs: G.saveAs if that's a desired behavior for global auto-dl too
+                        });
+                        downloadedByGlobal = true;
+                    } catch (e) { console.error("Global auto-download failed:", e); }
+                }
+            }
+
+            // If not downloaded by global, check per-tab auto-download
+            if (!downloadedByGlobal && G.featAutoDownTabId.size > 0 && G.featAutoDownTabId.has(info.tabId) && chrome.downloads && chrome.downloads.download) {
                 try {
                     const downDir = info.title == "NULL" ? "CatCatch/" : stringModify(info.title) + "/";
                     let fileName = isEmpty(info.name) ? stringModify(info.title) + '.' + info.ext : decodeURIComponent(stringModify(info.name));
@@ -260,8 +302,10 @@ function findMedia(data, isRegex = false, filter = false, timer = false) {
                         url: info.url,
                         filename: fileName
                     });
-                } catch (e) { return; }
+                } catch (e) { console.error("Per-tab auto-download failed:", e); }
             }
+
+            // The original lastError check for sendMessage callback
             if (chrome.runtime.lastError) { return; }
         });
 
@@ -380,11 +424,19 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
             MobileUserAgent: G.featMobileTabId.has(Message.tabId),
             AutoDown: G.featAutoDownTabId.has(Message.tabId),
             enable: G.enable,
+            globalAutoDownloadEnabled: G.globalAutoDownloadEnabled,
         }
         G.scriptList.forEach(function (item, key) {
             state[item.key] = item.tabId.has(Message.tabId);
         });
         sendResponse(state);
+        return true;
+    }
+    // Toggle Global Auto Download
+    if (Message.Message == "toggleGlobalAutoDownload") {
+        G.globalAutoDownloadEnabled = !G.globalAutoDownloadEnabled;
+        chrome.storage.sync.set({ globalAutoDownloadEnabled: G.globalAutoDownloadEnabled });
+        sendResponse(G.globalAutoDownloadEnabled);
         return true;
     }
     // 对tabId的标签 进行模拟手机操作

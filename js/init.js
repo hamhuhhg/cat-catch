@@ -119,6 +119,7 @@ G.OptionLists = {
     m3u8dl: 0,
     m3u8dlArg: `"\${url}" --save-dir "%USERPROFILE%\\Downloads\\m3u8dl" --save-name "\${title}_\${now}" \${referer|exists:'-H "Referer:*"'} \${cookie|exists:'-H "Cookie:*"'} --no-log`,
     m3u8dlConfirm: false,
+    globalAutoDownloadEnabled: false,
     playbackRate: 2,
     copyM3U8: "${url}",
     copyMPD: "${url}",

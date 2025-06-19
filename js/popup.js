@@ -814,6 +814,10 @@ function updateButton() {
                 $DOM.html(state.AutoDown ? i18n.closeDownload : i18n.autoDownload);
                 continue;
             }
+            if (key == "globalAutoDownloadEnabled") {
+                $DOM.text(state.globalAutoDownloadEnabled ? i18n.popupDisableGlobalAutoDownload : i18n.popupEnableGlobalAutoDownload);
+                continue;
+            }
             if (key == "enable") {
                 $DOM.html(state.enable ? i18n.pause : i18n.enable);
                 continue;
@@ -823,6 +827,14 @@ function updateButton() {
         }
     });
 }
+
+// 全局自动下载
+$("#GlobalAutoDown").click(function () {
+    chrome.runtime.sendMessage({ Message: "toggleGlobalAutoDownload" }, function () {
+        updateButton();
+    });
+});
+
 /* 格式判断 */
 function isPlay(data) {
     if (G.Player && !isJSON(data) && !isPicture(data)) { return true; }

@@ -1,0 +1,14 @@
+{
+    "globalAutoDownloadEnabledLabel": {
+        "message": "Enable Global Automatic Download",
+        "description": "Label for the global automatic download toggle in the options page."
+    },
+    "popupEnableGlobalAutoDownload": {
+        "message": "Enable Global Auto-Download",
+        "description": "Text for the popup button to enable global auto-download."
+    },
+    "popupDisableGlobalAutoDownload": {
+        "message": "Disable Global Auto-Download",
+        "description": "Text for the popup button to disable global auto-download."
+    }
+}
