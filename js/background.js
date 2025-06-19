@@ -1,5 +1,9 @@
 importScripts("/js/function.js", "/js/init.js");
 
+if (typeof G.activeVideoStates === 'undefined') {
+    G.activeVideoStates = {};
+}
+
 // Service Worker 5分钟后会强制终止扩展
 // https://bugs.chromium.org/p/chromium/issues/detail?id=1271154
 // https://stackoverflow.com/questions/66618136/persistent-service-worker-in-chrome-extension/70003493#70003493
@@ -351,15 +355,138 @@ function save(tabId) {
  */
 chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     if (chrome.runtime.lastError) { return; }
-    if (!G.initLocalComplete || !G.initSyncComplete) {
+
+    const tabId = sender.tab ? sender.tab.id : Message.tabId;
+    const frameId = sender.frameId || 0;
+
+    if (Message.action && Message.action.startsWith("video")) {
+        if (!tabId) {
+            // console.warn("Background: Video message without tabId, ignoring.", Message);
+        } else {
+            G.activeVideoStates[tabId] = G.activeVideoStates[tabId] || {};
+
+            // --- BEGIN NEW SWITCH BLOCK FOR VIDEO ACTIONS ---
+            switch (Message.action) {
+                case "videoLoadingSource":
+                case "videoMetadataReady":
+                    G.activeVideoStates[tabId][Message.videoId] = {
+                        ...(G.activeVideoStates[tabId][Message.videoId] || {}),
+                        src: Message.src,
+                        duration: Message.duration,
+                        currentTime: Message.currentTime || 0,
+                        isPlaying: (G.activeVideoStates[tabId][Message.videoId] && G.activeVideoStates[tabId][Message.videoId].isPlaying) || false,
+                        initialDetectionDone: Message.action === "videoMetadataReady" || (G.activeVideoStates[tabId][Message.videoId] && G.activeVideoStates[tabId][Message.videoId].initialDetectionDone),
+                        tabUrl: sender.tab ? sender.tab.url : (G.activeVideoStates[tabId][Message.videoId] ? G.activeVideoStates[tabId][Message.videoId].tabUrl : null),
+                        frameId: frameId,
+                        error: null,
+                        lastUpdateTime: Date.now()
+                    };
+                    break;
+
+                case "videoPlaybackStarted":
+                    if (!G.activeVideoStates[tabId][Message.videoId]) {
+                        G.activeVideoStates[tabId][Message.videoId] = { src: Message.src, duration: Message.duration, tabUrl: sender.tab ? sender.tab.url : null, frameId: frameId, error: null };
+                    }
+                    G.activeVideoStates[tabId][Message.videoId] = {
+                        ...G.activeVideoStates[tabId][Message.videoId],
+                        currentTime: Message.currentTime,
+                        duration: Message.duration || G.activeVideoStates[tabId][Message.videoId].duration,
+                        isPlaying: true,
+                        lastUpdateTime: Date.now()
+                    };
+
+                    if (G.captureOnNextVideoPlayed) {
+                        for (const vidId_key in G.activeVideoStates[tabId]) {
+                            if (vidId_key !== Message.videoId && G.activeVideoStates[tabId][vidId_key].isPlaying) {
+                                initiateAutomaticCapture(G.activeVideoStates[tabId][vidId_key], vidId_key, sender.tab);
+                                G.activeVideoStates[tabId][vidId_key].isPlaying = false;
+                            }
+                        }
+                    }
+                    break;
+
+                case "videoPlaybackPaused":
+                    if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
+                        G.activeVideoStates[tabId][Message.videoId].isPlaying = false;
+                        G.activeVideoStates[tabId][Message.videoId].currentTime = Message.currentTime;
+                        G.activeVideoStates[tabId][Message.videoId].lastUpdateTime = Date.now();
+                    }
+                    break;
+
+                case "videoProgressUpdated":
+                    if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
+                        G.activeVideoStates[tabId][Message.videoId].currentTime = Message.currentTime;
+                        G.activeVideoStates[tabId][Message.videoId].lastUpdateTime = Date.now();
+
+                        if (G.captureOnMinWatchTime &&
+                            !G.activeVideoStates[tabId][Message.videoId].hasBeenCaptured &&
+                            G.activeVideoStates[tabId][Message.videoId].duration > 0 &&
+                            Message.currentTime >= G.minWatchTimeSeconds) {
+                            initiateAutomaticCapture(G.activeVideoStates[tabId][Message.videoId], Message.videoId, sender.tab);
+                        }
+                    }
+                    break;
+
+                case "videoHasEnded":
+                    if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
+                        G.activeVideoStates[tabId][Message.videoId].isPlaying = false;
+                        G.activeVideoStates[tabId][Message.videoId].currentTime = Message.duration;
+                        G.activeVideoStates[tabId][Message.videoId].lastUpdateTime = Date.now();
+
+                        if (G.captureOnVideoEnd) {
+                            initiateAutomaticCapture(G.activeVideoStates[tabId][Message.videoId], Message.videoId, sender.tab);
+                        }
+                    }
+                    break;
+
+                case "videoNewSourceLoaded":
+                    G.activeVideoStates[tabId][Message.videoId] = {
+                        src: Message.src,
+                        duration: Message.duration,
+                        currentTime: Message.currentTime || 0,
+                        isPlaying: false,
+                        initialDetectionDone: true,
+                        hasBeenCaptured: false,
+                        tabUrl: sender.tab ? sender.tab.url : null,
+                        frameId: frameId,
+                        error: null,
+                        lastUpdateTime: Date.now()
+                    };
+                    break;
+
+                case "videoElementRemoved":
+                    if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
+                        delete G.activeVideoStates[tabId][Message.videoId];
+                        if (Object.keys(G.activeVideoStates[tabId]).length === 0) {
+                            delete G.activeVideoStates[tabId];
+                        }
+                    }
+                    break;
+
+                case "videoError":
+                    if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
+                        G.activeVideoStates[tabId][Message.videoId].error = Message.error;
+                        G.activeVideoStates[tabId][Message.videoId].isPlaying = false;
+                    }
+                    break;
+            }
+            // --- END NEW SWITCH BLOCK FOR VIDEO ACTIONS ---
+        }
+        // Return true for async sendResponse if any video actions use it,
+        // or ensure it falls through to other handlers that might.
+        // For now, assuming video actions don't use sendResponse directly.
+    }
+    // ELSE IF LADDER FOR EXISTING Message.Message handlers
+    else if (!G.initLocalComplete || !G.initSyncComplete) { // Moved this check here
         sendResponse("error");
         return true;
     }
     // 以下检查是否有 tabId 不存在使用当前标签
-    Message.tabId = Message.tabId ?? G.tabId;
+    else { // Added else to group existing logic
+        Message.tabId = Message.tabId ?? G.tabId; // This was outside the else, moved in
 
-    // 从缓存中保存数据到本地
-    if (Message.Message == "pushData") {
+        // 从缓存中保存数据到本地
+        if (Message.Message == "pushData") {
         (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
         sendResponse("ok");
         return true;
@@ -908,3 +1035,96 @@ function isSpecialPage(url) {
 // chrome.storage.local.get(function (data) { console.log(data.MediaData) });
 // chrome.declarativeNetRequest.getSessionRules(function (rules) { console.log(rules); });
 // chrome.tabs.query({}, function (tabs) { for (let item of tabs) { console.log(item.id); } });
+
+chrome.tabs.onRemoved.addListener(function(removedTabId, removeInfo) {
+    if (G.captureOnTabClosed && G.activeVideoStates[removedTabId]) {
+        for (const videoId_key_removed in G.activeVideoStates[removedTabId]) {
+            const videoState = G.activeVideoStates[removedTabId][videoId_key_removed];
+            if (videoState.isPlaying || (videoState.currentTime && videoState.currentTime > 0)) {
+                const pseudoTabDetails = {
+                    id: removedTabId,
+                    url: videoState.tabUrl
+                };
+                initiateAutomaticCapture(videoState, videoId_key_removed, pseudoTabDetails);
+            }
+        }
+    }
+    delete G.activeVideoStates[removedTabId];
+});
+
+function initiateAutomaticCapture(videoState, videoId, tabDetails) {
+    if (!videoState || videoState.hasBeenCaptured || !videoState.src) {
+        return;
+    }
+
+    const currentTabUrl = (tabDetails && tabDetails.url) ? tabDetails.url : videoState.tabUrl;
+    const currentTabId = tabDetails ? tabDetails.id : null;
+
+    if (!currentTabId || !currentTabUrl) {
+        // console.warn("Background: initiateAutomaticCapture missing crucial tabId or tabUrl.");
+        return;
+    }
+
+    // Ensure G.blockUrlWhite and G.blockUrlSet are available and correctly populated
+    const blockUrlFlag = G.blockUrlSet && G.blockUrlSet.has(currentTabId);
+    if (G.blockUrlWhite ? !blockUrlFlag : blockUrlFlag) { // Check against blockUrl logic
+        return;
+    }
+    // The above isLockUrl check was simplified, let's use the direct G.blockUrlSet check
+    // if (isLockUrl(currentTabUrl)) { // isLockUrl is assumed global
+    //     return;
+    // }
+
+    let fileExtension = "";
+    try {
+        const urlObj = new URL(videoState.src);
+        const pathParts = urlObj.pathname.split('/');
+        if (pathParts.length > 0) {
+            const fileName = pathParts[pathParts.length - 1];
+            const extParts = fileName.split('.');
+            if (extParts.length > 1 && extParts[0] !== "") {
+                fileExtension = extParts.pop().toLowerCase();
+            }
+        }
+    } catch (e) {
+        // console.warn("Background: Could not parse extension from video src:", videoState.src, e);
+    }
+
+    let typeAllowed = false;
+    if (fileExtension) {
+        const extCheckResult = CheckExtension(fileExtension, undefined); // CheckExtension is assumed global
+        if (extCheckResult === true) {
+            typeAllowed = true;
+        } else if (extCheckResult === "break") {
+            return;
+        }
+    } else {
+        // If no extension, we might allow it or rely on a later MIME type check if findMedia does one
+        // For now, let's assume if no extension, it's provisionally allowed to be checked by findMedia
+        typeAllowed = true;
+    }
+
+    if (!typeAllowed) {
+        return;
+    }
+
+    videoState.hasBeenCaptured = true;
+
+    const syntheticData = {
+        url: videoState.src,
+        tabId: currentTabId,
+        initiator: videoState.tabUrl || currentTabUrl,
+        requestId: "auto_watched_capture_" + videoId + "_" + Date.now(),
+        getTime: Date.now(),
+        frameId: videoState.frameId || 0,
+        isAutomaticWatchedCapture: true,
+        duration: videoState.duration,
+    };
+
+    try {
+        findMedia(syntheticData, true, true); // findMedia is assumed global
+    } catch (e) {
+        // console.error("Background: Error calling findMedia for automatic capture", e);
+        videoState.hasBeenCaptured = false;
+    }
+}

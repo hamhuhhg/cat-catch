@@ -168,6 +168,11 @@ G.OptionLists = {
     maxLength: G.isMobile ? 999 : 9999,
     sidePanel: false,   // 侧边栏
     deepSearch: false, // 常开深度搜索
+    captureOnNextVideoPlayed: true,
+    captureOnTabClosed: true,
+    captureOnVideoEnd: true,
+    captureOnMinWatchTime: false,
+    minWatchTimeSeconds: 30,
 };
 // 本地储存的配置
 G.LocalVar = {

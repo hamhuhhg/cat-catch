@@ -10,5 +10,37 @@
     "popupDisableGlobalAutoDownload": {
         "message": "Disable Global Auto-Download",
         "description": "Text for the popup button to disable global auto-download."
+    },
+    "autoVideoCaptureSettingsTitle": {
+        "message": "Automatic Video Capture Settings",
+        "description": "Title for the Automatic Video Capture Settings section in options."
+    },
+    "autoVideoCaptureSettingsExplain": {
+        "message": "Configure triggers for automatically capturing watched videos. Captured videos will appear in the extension popup. This respects the general file type and blacklist settings.",
+        "description": "Explanation for the auto video capture section."
+    },
+    "captureOnNextVideoPlayedLabel": {
+        "message": "Capture when next video starts playing",
+        "description": "Label for 'captureOnNextVideoPlayed' option."
+    },
+    "captureOnTabClosedLabel": {
+        "message": "Capture when video tab is closed",
+        "description": "Label for 'captureOnTabClosed' option."
+    },
+    "captureOnVideoEndLabel": {
+        "message": "Capture when video finishes playing",
+        "description": "Label for 'captureOnVideoEnd' option."
+    },
+    "captureOnMinWatchTimeLabel": {
+        "message": "Capture after minimum watch time",
+        "description": "Label for 'captureOnMinWatchTime' option."
+    },
+    "minWatchTimeSecondsLabel": {
+        "message": "Minimum watch time:",
+        "description": "Label for 'minWatchTimeSeconds' input."
+    },
+    "secondsUnit": {
+        "message": "seconds",
+        "description": "Unit for seconds."
     }
 }
