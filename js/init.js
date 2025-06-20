@@ -40,7 +40,7 @@ const i18n = new Proxy(chrome.i18n.getMessage, {
     }
 });
 // 全局变量
-var G = {};
+self.G = {};
 G.initSyncComplete = false;
 G.initLocalComplete = false;
 // 缓存数据
