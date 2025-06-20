@@ -1,6 +1,18 @@
 (function () {
     class CatCatcher {
         constructor() {
+            this.settings = {
+                watchedOnNextVideo: true,
+                watchedOnTabClose: true,
+                watchedOnCaptureComplete: true
+            };
+            this.currentMediaSourceIdentifier = null;
+            this.tabId = null;
+            this.hasSentVideoForSave = false;
+            this.storageSaveInterval = null;
+            this.boundMessageHandler = null;
+            this.proxiedSourceBuffers = new WeakMap();
+
             console.log("catch.js Start");
 
             // 初始化属性
@@ -35,8 +47,100 @@
             // 创建和设置UI
             this.createUI();
 
+            this.getSettingsAndTabId().catch(err => console.warn("CatCatch: Failed to get initial settings/tabId:", err));
+
             // 代理MediaSource方法
             this.proxyMediaSourceMethods();
+
+            this.setupPeriodicStorageSave(); // For watchedOnTabClose
+            this.boundMessageHandler = this.handleBackgroundMessage.bind(this); // Bind `this`
+            window.addEventListener("message", this.boundMessageHandler);
+        }
+
+        getSettingsAndTabId() {
+            // Ask background.js for settings and its tabId
+            // Use a promise to ensure settings are available before certain operations
+            return new Promise((resolve, reject) => {
+                window.postMessage({ action: "catCatchToBackground", Message: "getCaptureSettings" }, "*");
+
+                const messageListener = (event) => {
+                    if (event.source === window && event.data && event.data.action === "catCatchSettingsResponse") {
+                        if (event.data.settings) {
+                            this.settings = { ...this.settings, ...event.data.settings };
+                            // console.log("CatCatch: Received settings", this.settings);
+                        }
+                        if (event.data.tabId) {
+                            this.tabId = event.data.tabId;
+                            // console.log("CatCatch: Received tabId", this.tabId);
+                        }
+                        window.removeEventListener("message", messageListener);
+                        resolve();
+                    }
+                };
+                window.addEventListener("message", messageListener);
+                setTimeout(() => { // Timeout for safety
+                    window.removeEventListener("message", messageListener);
+                    reject(new Error("Timeout getting settings from background"));
+                }, 5000);
+            });
+        }
+
+        _fullClearCapturedMedia() {
+            // console.log("CatCatch: Full clear of captured media.");
+            this.catchMedia = [];
+            this.mediaSize = 0;
+            this.isComplete = false;
+            // this.currentMediaSourceIdentifier = null; // This is reset when a new source is identified.
+            // this.hasSentVideoForSave = false; // This is reset when a new source is identified.
+        }
+
+        prepareAndSendVideoForSave(triggerType) {
+            if (this.hasSentVideoForSave || this.catchMedia.length === 0 || !this.catchMedia[0]?.bufferList?.length) {
+                // console.log("CatCatch: Save aborted - already sent or no data for current source.");
+                return;
+            }
+            // console.log(`CatCatch: Preparing to send video. Trigger: ${triggerType}`);
+            this.hasSentVideoForSave = true; // Set flag immediately for the current capture session
+
+            this.getFileName(); // Ensure filename is up-to-date
+            const filename = this.fileName ? this.fileName.innerHTML.trim() : (document.title || "captured_video");
+            const primaryStream = this.catchMedia[0]; // Assuming the first stream is the main one
+            const mimeType = (primaryStream.mimeType && primaryStream.mimeType.split(';')[0]) || 'video/mp4';
+
+            const allBuffers = [];
+            for (const buffer of primaryStream.bufferList) {
+                allBuffers.push(buffer);
+            }
+
+            if (allBuffers.length === 0) {
+                // console.log("CatCatch: No buffers to save.");
+                // If we set hasSentVideoForSave = true but send nothing, we might block future saves.
+                // This should ideally not happen if the initial check (bufferList.length) is done.
+                // For safety, reset if nothing is actually sent.
+                this.hasSentVideoForSave = false;
+                return;
+            }
+
+            const videoBlob = new Blob(allBuffers, { type: mimeType });
+            const objectUrl = URL.createObjectURL(videoBlob);
+
+            // console.log(`CatCatch: Sending video to background. Filename: ${filename}, Type: ${mimeType}, Size: ${videoBlob.size}, ObjectURL: ${objectUrl}`);
+
+            // Message structure for content-script to relay to background.js
+            window.postMessage({
+                action: "catCatchToBackground",     // For content-script's existing listener
+                Message: "saveCapturedVideo",        // Specific message type for background.js
+                data: {
+                    objectUrl: objectUrl,
+                    filename: `${filename}.${mimeType.split('/')[1] || 'mp4'}`,
+                    mimeType: mimeType,
+                    tabId: this.tabId,               // Send tabId for context
+                    trigger: triggerType
+                }
+            }, "*");
+
+            this._fullClearCapturedMedia(); // Clear media after sending it for save
+            // Note: URL.revokeObjectURL(objectUrl) should be done by background.js after it fetches and processes the blob.
         }
 
         /**
@@ -546,33 +650,66 @@
             window.MediaSource.prototype.addSourceBuffer = new Proxy(window.MediaSource.prototype.addSourceBuffer, {
                 apply: (target, thisArg, argumentsList) => {
                     try {
-                        const result = Reflect.apply(target, thisArg, argumentsList);
+                        // --- START MODIFICATIONS ---
+                        const newMediaSourceIdentifier = thisArg; // The MediaSource instance
 
-                        // 标题获取
-                        setTimeout(() => { this.getFileName(); }, 2000);
-                        this.tips.innerHTML = this.i18n("capturingData", "捕获数据中...");
+                        if (this.currentMediaSourceIdentifier &&
+                            this.currentMediaSourceIdentifier !== newMediaSourceIdentifier &&
+                            !this.hasSentVideoForSave &&
+                            this.settings.watchedOnNextVideo &&
+                            this.catchMedia.length > 0 && this.catchMedia[0]?.bufferList?.length > 0) {
 
-                        this.catchMedia.push({ mimeType: argumentsList[0], bufferList: [] });
-                        const index = this.catchMedia.length - 1;
+                            // console.log("CatCatch: New MediaSource instance detected, previous video considered 'watchedOnNextVideo'.");
+                            this.prepareAndSendVideoForSave("watchedOnNextVideo");
+                        }
 
-                        // 代理 appendBuffer 方法
-                        result.appendBuffer = new Proxy(result.appendBuffer, {
-                            apply: (target, thisArg, argumentsList) => {
-                                Reflect.apply(target, thisArg, argumentsList);
+                        // If the MediaSource identifier has changed, it's a new video stream.
+                        if (this.currentMediaSourceIdentifier !== newMediaSourceIdentifier) {
+                            // console.log("CatCatch: New MediaSource identified. Resetting hasSentVideoForSave and clearing old media.");
+                            this._fullClearCapturedMedia(); // Clear out any old media
+                            this.hasSentVideoForSave = false; // Reset save flag for the new video
+                            this.currentMediaSourceIdentifier = newMediaSourceIdentifier;
+                        }
 
-                                if (this.enable && argumentsList[0]) {
-                                    this.mediaSize += argumentsList[0].byteLength || 0;
-                                    if (this.tips) {
-                                        this.tips.innerHTML = this.i18n("capturingData", "捕获数据中...") + ": " + this.byteToSize(this.mediaSize);
+                        // Ensure catchMedia is initialized for the current source if it's empty
+                        if (this.catchMedia.length === 0) {
+                            this.catchMedia.push({ mimeType: argumentsList[0], bufferList: [] });
+                        } else if (this.catchMedia[0].mimeType !== argumentsList[0] && this.catchMedia[0].bufferList.length === 0) {
+                            // This section intentionally left as per plan, acknowledging potential future enhancements for multi-stream.
+                        }
+                        // --- END MODIFICATIONS ---
+
+                        const result = Reflect.apply(target, thisArg, argumentsList); // Original call
+
+                        // Original logic for tips and adding to bufferList:
+                        if (!this.fileName && this.summary) {
+                           this.summary.click();
+                        }
+                        if (this.tips) {
+                           this.tips.innerHTML = this.i18n("capturingData", "捕获数据中...");
+                        }
+
+                        const currentStreamData = this.catchMedia[0];
+
+                        if (result && !this.proxiedSourceBuffers.has(result)) {
+                            result.appendBuffer = new Proxy(result.appendBuffer, {
+                                apply: (targetAppend, thisArgAppend, argumentsListAppend) => {
+                                    Reflect.apply(targetAppend, thisArgAppend, argumentsListAppend);
+
+                                    if (this.enable && argumentsListAppend[0] && currentStreamData) {
+                                        this.mediaSize += argumentsListAppend[0].byteLength || 0;
+                                        if (this.tips) {
+                                            this.tips.innerHTML = this.i18n("capturingData", "捕获数据中...") + ": " + this.byteToSize(this.mediaSize);
+                                        }
+                                        currentStreamData.bufferList.push(argumentsListAppend[0]);
                                     }
-                                    this.catchMedia[index].bufferList.push(argumentsList[0]);
                                 }
-                            }
-                        });
-
+                            });
+                            this.proxiedSourceBuffers.set(result, true);
+                        }
                         return result;
                     } catch (error) {
-                        console.error("addSourceBuffer 代理错误:", error);
+                        console.error("CatCatch: addSourceBuffer proxy error:", error);
                         return Reflect.apply(target, thisArg, argumentsList);
                     }
                 }
@@ -582,20 +719,45 @@
             window.MediaSource.prototype.endOfStream = new Proxy(window.MediaSource.prototype.endOfStream, {
                 apply: (target, thisArg, argumentsList) => {
                     try {
-                        Reflect.apply(target, thisArg, argumentsList);
+                        Reflect.apply(target, thisArg, argumentsList); // Original call first
 
-                        if (this.enable) {
-                            this.isComplete = true;
-                            if (this.tips) {
+                        // --- START MODIFICATIONS ---
+                        if (this.enable && !this.hasSentVideoForSave) { // Check if enabled and not already saved
+                            this.isComplete = true; // Mark as complete
+                            // console.log("CatCatch: endOfStream called. Capture complete for current source.");
+
+                            if (this.tips) { // Update UI tip
                                 this.tips.innerHTML = this.i18n("captureCompleted", "捕获完成");
                             }
 
-                            if (localStorage.getItem("CatCatchCatch_autoDown") == "checked") {
-                                setTimeout(() => this.catchDownload(), 500);
+                            if (this.settings.watchedOnCaptureComplete) {
+                                if (this.catchMedia.length > 0 && this.catchMedia[0]?.bufferList?.length > 0) {
+                                    // console.log("CatCatch: Processing video due to watchedOnCaptureComplete.");
+                                    this.prepareAndSendVideoForSave("watchedOnCaptureComplete");
+                                } else {
+                                    // console.log("CatCatch: watchedOnCaptureComplete triggered, but no data to save.");
+                                }
+                            } else if (localStorage.getItem("CatCatchCatch_autoDown") == "checked") {
+                                // Fallback to old CatCatch UI's autoDownload if not saved by other means and that option is checked
+                                // console.log("CatCatch: Falling back to legacy autoDown (UI checkbox).");
+                                setTimeout(() => {
+                                    // Ensure this doesn't conflict with prepareAndSendVideoForSave
+                                    if (!this.hasSentVideoForSave) { // Double check before legacy download
+                                        this.catchDownload(); // This is the original method for the UI download button
+                                    }
+                                }, 500);
+                            }
+                        } else if (this.enable && this.hasSentVideoForSave) {
+                            // console.log("CatCatch: endOfStream called, but video already sent for save.");
+                            // If it was already sent, make sure isComplete is still marked if needed
+                            this.isComplete = true;
+                             if (this.tips) {
+                                this.tips.innerHTML = this.i18n("captureCompleted", "捕获完成");
                             }
                         }
+                        // --- END MODIFICATIONS ---
                     } catch (error) {
-                        console.error("endOfStream 代理错误:", error);
+                        console.error("CatCatch: endOfStream proxy error:", error);
                         return Reflect.apply(target, thisArg, argumentsList);
                     }
                 }

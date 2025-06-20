@@ -29,6 +29,7 @@
       <li><a href="#anchorDownloader" data-i18n="downloader"></a></li>
       <li><a href="#anchorM3u8Parser" data-i18n="m3u8Parser"></a></li>
       <li><a href="#anchorOtherSettings" data-i18n="otherSettings"></a></li>
+      <li><a href="#anchorAutoCaptureSettings" data-i18n="autoCaptureSettings"></a></li>
       <li><a href="#anchorCustomCSS" data-i18n="customCSS"></a></li>
       <li><a href="#anchorOperation" data-i18n="operation"></a></li>
       <li><a href="#anchorAbout" data-i18n="about"></a></li>
@@ -731,6 +732,55 @@
             </div>
           </div>
 
+        </div>
+        <div class="flex-end">
+          <button type="button" class="resetOption" data-i18n="resetSettings"></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Automatic Capture Settings -->
+    <section id="anchorAutoCaptureSettings">
+      <h1 class="optionsTitle" data-i18n="autoCaptureSettings"></h1>
+      <div class="optionBox">
+        <span class="explain" data-i18n="autoCaptureSettingsTip"></span>
+        <div class="list otherOption">
+          <div class="item">
+            <div data-i18n="enableAutoCapture"></div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="autoCaptureEnabled" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
+          <div class="item">
+            <div data-i18n="watchedOnNextVideo"></div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="watchedOnNextVideo" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
+          <div class="item">
+            <div data-i18n="watchedOnTabClose"></div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="watchedOnTabClose" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
+          <div class="item">
+            <div data-i18n="watchedOnCaptureComplete"></div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="watchedOnCaptureComplete" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
         </div>
         <div class="flex-end">
           <button type="button" class="resetOption" data-i18n="resetSettings"></button>

@@ -383,6 +383,39 @@
   "customCSS": {
     "message": "独自のスタイルシート、CSSを設定する"
   },
+    "autoCaptureSettings": {
+        "message": "Automatic Capture Settings"
+    },
+    "autoCaptureSettingsTip": {
+        "message": "Configure automatic video capture and when to save."
+    },
+    "enableAutoCapture": {
+        "message": "Enable Automatic Video Capture"
+    },
+    "watchedOnNextVideo": {
+        "message": "Save when next video plays in the same tab"
+    },
+    "watchedOnTabClose": {
+        "message": "Save when video tab is closed"
+    },
+    "watchedOnCaptureComplete": {
+        "message": "Save when 100% of the video is captured"
+    },
+    "autoCapturePopupEnable": {
+        "message": "Enable Auto Capture"
+    },
+    "autoCapturePopupDisable": {
+        "message": "Disable Auto Capture"
+    },
+    "resumeAutoCaptureForTab": {
+        "message": "Resume Auto-Capture for Tab"
+    },
+    "stopAutoCaptureForTab": {
+        "message": "Stop Auto-Capture for Tab"
+    },
+    "autoCaptureActiveGlobal": {
+        "message": "Auto-Capture ON"
+    },
   "operation": {
     "message": "作業"
   },

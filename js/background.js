@@ -1,5 +1,87 @@
 importScripts("/js/function.js", "/js/init.js");
 
+var tabCaptureStates = new Map();
+var autoCaptureManuallyDisabledTabs = new Set();
+
+function injectCatchScript(tabId, catchScriptInfo) {
+    const files = [`catch-script/catch.js`];
+    if (catchScriptInfo.i18n) files.unshift("catch-script/i18n.js");
+    chrome.scripting.executeScript({
+        target: { tabId: tabId, allFrames: catchScriptInfo.allFrames },
+        files: files,
+        injectImmediately: true,
+        world: catchScriptInfo.world
+    }, () => {
+        if (chrome.runtime.lastError) {
+            console.error(`CatCatch: Error injecting catch.js into tab ${tabId}: ${chrome.runtime.lastError.message}`);
+            G.scriptList.get("catch.js").tabId.delete(tabId); // Rollback
+        } else {
+            // console.log(`CatCatch: catch.js auto-injected into tab ${tabId}`);
+        }
+        // No reload for automatic injection
+    });
+}
+
+function removeCatchScript(tabId, catchScriptInfo) {
+    // Attempt to notify the content script to clean up its UI and operations.
+    chrome.tabs.sendMessage(tabId, {
+        catCatchMessageRelay: true,
+        for: "catchScript",
+        payload: { command: "shutdown" }
+    }, response => {
+        if (chrome.runtime.lastError) {
+            // console.warn(`CatCatch: Could not send shutdown to catch.js in tab ${tabId}: ${chrome.runtime.lastError.message}.`);
+        }
+    });
+    // No reload for automatic removal
+}
+
+function manageAutoCaptureForTab(tabId, tabUrl) {
+    if (!G.initSyncComplete || !G.initLocalComplete || tabId <= 0 || !tabUrl || isSpecialPage(tabUrl)) {
+        return;
+    }
+
+    const catchScript = G.scriptList.get("catch.js");
+    if (!catchScript) {
+        console.error("CatCatch: catch.js script info not found in G.scriptList.");
+        return;
+    }
+
+    const isBlockedByUrl = G.blockUrl.length > 0 && isLockUrl(tabUrl);
+    const effectivelyBlocked = G.blockUrlWhite ? !isBlockedByUrl : isBlockedByUrl;
+
+    // Determine if catch.js should be active based on auto-capture settings
+    // MODIFIED: Added check for autoCaptureManuallyDisabledTabs
+    if (autoCaptureManuallyDisabledTabs.has(tabId)) {
+        // console.log(`CatCatch: Auto-capture for tab ${tabId} is manually disabled.`);
+        if (catchScript.tabId.has(tabId)) {
+            catchScript.tabId.delete(tabId);
+            removeCatchScript(tabId, catchScript);
+        }
+        return;
+    }
+    const shouldBeActiveDueToAuto = G.autoCaptureEnabled && G.enable && !effectivelyBlocked;
+    const isCurrentlyActive = catchScript.tabId.has(tabId);
+
+    if (shouldBeActiveDueToAuto) {
+        if (!isCurrentlyActive) {
+            catchScript.tabId.add(tabId);
+            injectCatchScript(tabId, catchScript);
+        }
+    } else { // Not meeting auto-capture conditions (auto_off, main_ext_disabled, or tab_is_blocked)
+        if (isCurrentlyActive && G.autoCaptureEnabled) {
+            // If auto-capture is ON, but conditions are no longer met (e.g., tab became blocklisted, or G.enable flipped)
+            // Only remove if it was likely added by auto-capture.
+            // This part is tricky. For now, if it *shouldn't* be active due to current auto-capture rules,
+            // and it *is* active, assume it needs to be deactivated.
+            catchScript.tabId.delete(tabId);
+            removeCatchScript(tabId, catchScript);
+        }
+        // If G.autoCaptureEnabled is FALSE, global deactivation is handled by chrome.storage.onChanged.
+        // Individual manual deactivations will also set catchScript.tabId.delete(tabId).
+    }
+}
+
 // Service Worker 5分钟后会强制终止扩展
 // https://bugs.chromium.org/p/chromium/issues/detail?id=1271154
 // https://stackoverflow.com/questions/66618136/persistent-service-worker-in-chrome-extension/70003493#70003493
@@ -307,10 +389,110 @@ function save(tabId) {
  */
 chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     if (chrome.runtime.lastError) { return; }
+
+    // Handle getCaptureSettings from catch-script/catch.js (via content-script.js)
+    if (Message.Message === "getCaptureSettings") {
+        if (sender.tab && sender.tab.id) {
+            const settingsForClient = {
+                watchedOnNextVideo: G.watchedOnNextVideo,
+                watchedOnTabClose: G.watchedOnTabClose,
+                watchedOnCaptureComplete: G.watchedOnCaptureComplete
+            };
+            // console.log(`Background: Sending settings to tab ${sender.tab.id}`, settingsForClient);
+            chrome.tabs.sendMessage(sender.tab.id, {
+                catCatchMessageRelay: true,
+                for: "catchScript",
+                payload: {
+                    action: "receiveSettingsAndTabId",
+                    settings: settingsForClient,
+                    tabId: sender.tab.id
+                }
+            });
+        }
+        return true;
+    }
+
+    // Handle saveCapturedVideo from catch-script/catch.js
+    if (Message.Message === "saveCapturedVideo") {
+        const videoData = Message.data;
+        if (videoData && videoData.objectUrl && videoData.filename) {
+            // console.log(`Background: Received saveCapturedVideo request from tab ${videoData.tabId || sender.tab.id}`, videoData);
+            fetch(videoData.objectUrl)
+                .then(response => response.blob())
+                .then(blob => {
+                    // console.log("Background: Blob fetched successfully, size:", blob.size);
+                    chrome.downloads.download({
+                        url: URL.createObjectURL(blob),
+                        filename: videoData.filename,
+                        saveAs: G.saveAs
+                    }, (downloadId) => {
+                        if (chrome.runtime.lastError) {
+                            console.error("CatCatch: Download failed:", chrome.runtime.lastError.message);
+                        } else {
+                            // console.log("CatCatch: Download started with ID:", downloadId);
+                        }
+                        URL.revokeObjectURL(videoData.objectUrl);
+                    });
+                })
+                .catch(err => {
+                    console.error("CatCatch: Error fetching blob from object URL:", err, videoData.objectUrl);
+                    URL.revokeObjectURL(videoData.objectUrl);
+                });
+        } else {
+            console.warn("CatCatch: Invalid videoData for saveCapturedVideo", videoData);
+        }
+        return true;
+    }
+
+    // Handle updateTabCaptureState from catch-script/catch.js
+    if (Message.Message === "updateTabCaptureState") {
+        if (Message.tabId && Message.captureState) {
+            // console.log(`Background: Updating capture state for tab ${Message.tabId}`, Message.captureState);
+            tabCaptureStates.set(Message.tabId, Message.captureState);
+        }
+        return true;
+    }
+
     if (!G.initLocalComplete || !G.initSyncComplete) {
         sendResponse("error");
         return true;
     }
+
+    // Handle toggleManualCaptureOverride
+    if (Message.Message === "toggleManualCaptureOverride") {
+        const tabId = Message.tabId || G.tabId;
+        const catchScript = G.scriptList.get("catch.js");
+
+        if (!catchScript) {
+            console.error("CatCatch: catch.js script info not found.");
+            sendResponse({ success: false, error: "Script info not found." });
+            return true;
+        }
+
+        let newManualOverrideState;
+        if (autoCaptureManuallyDisabledTabs.has(tabId)) {
+            autoCaptureManuallyDisabledTabs.delete(tabId);
+            newManualOverrideState = false;
+            // console.log(`CatCatch: Manual override removed for tab ${tabId}. Applying auto-capture logic.`);
+            chrome.tabs.get(tabId, function(tab) {
+                if (!chrome.runtime.lastError && tab && tab.url) {
+                    manageAutoCaptureForTab(tabId, tab.url);
+                }
+            });
+        } else {
+            autoCaptureManuallyDisabledTabs.add(tabId);
+            newManualOverrideState = true;
+            // console.log(`CatCatch: Manual override added for tab ${tabId}. Stopping capture.`);
+            if (catchScript.tabId.has(tabId)) {
+                catchScript.tabId.delete(tabId);
+                removeCatchScript(tabId, catchScript);
+            }
+        }
+        chrome.runtime.sendMessage({ Message: "buttonStateUpdated", tabId: tabId });
+        sendResponse({ success: true, manualOverrideActive: newManualOverrideState });
+        return true;
+    }
+
     // 以下检查是否有 tabId 不存在使用当前标签
     Message.tabId = Message.tabId ?? G.tabId;
 
@@ -380,6 +562,8 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
             MobileUserAgent: G.featMobileTabId.has(Message.tabId),
             AutoDown: G.featAutoDownTabId.has(Message.tabId),
             enable: G.enable,
+            autoCaptureEnabled: G.autoCaptureEnabled, // Added
+            isManuallyDisabled: autoCaptureManuallyDisabledTabs.has(Message.tabId) // Added
         }
         G.scriptList.forEach(function (item, key) {
             state[item.key] = item.tabId.has(Message.tabId);
@@ -407,6 +591,12 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     }
     // 对tabId的标签 脚本注入或删除
     if (Message.Message == "script") {
+        if (Message.script === "catch.js" && G.autoCaptureEnabled) {
+            console.warn("CatCatch: 'script' message for catch.js received while auto-capture is ON. Should use 'toggleManualCaptureOverride'.");
+            sendResponse({ success: false, error: "Use toggleManualCaptureOverride when auto-capture is on." });
+            return true;
+        }
+        // Original logic for other scripts, or for catch.js when auto-capture is OFF
         if (!G.scriptList.has(Message.script)) {
             sendResponse("error no exists");
             return false;
@@ -500,6 +690,39 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         sendResponse("ok");
         return true;
     }
+    // Handle autoCaptureEnabled change
+    if (changes.autoCaptureEnabled !== undefined) {
+        G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
+        // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
+        const catchScript = G.scriptList.get("catch.js");
+        if (!catchScript) {
+            console.error("CatCatch: catch.js script info not found for storage change handling.");
+            return true; // Return true for async handling
+        }
+
+        if (G.autoCaptureEnabled) {
+            // Auto capture just turned ON. Iterate all tabs and apply logic.
+            chrome.tabs.query({}, function(tabs) {
+                if (chrome.runtime.lastError) {
+                    console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
+                    return;
+                }
+                for (const tab of tabs) {
+                    if (tab.id && tab.url) { // Ensure tab.url is present
+                        manageAutoCaptureForTab(tab.id, tab.url);
+                    }
+                }
+            });
+        } else {
+            // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+            const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+            activeTabsCopy.forEach(tabIdToDisable => {
+                // No need to check other conditions like blocklist here. If auto is off, it's off.
+                catchScript.tabId.delete(tabIdToDisable);
+                removeCatchScript(tabIdToDisable, catchScript);
+            });
+        }
+    }
     // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
         const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
@@ -568,6 +791,9 @@ chrome.tabs.onActivated.addListener(function (activeInfo) {
  */
 chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
     if (isSpecialPage(tab.url) || tabId <= 0 || !G.initSyncComplete) { return; }
+    if (changeInfo.status === "complete" && tab.url) { // Ensure tab.url is present
+        manageAutoCaptureForTab(tabId, tab.url);
+    }
     if (changeInfo.status && changeInfo.status == "loading" && G.autoClearMode == 2) {
         G.urlMap.delete(tabId);
         chrome.alarms.get("save", function (alarm) {
@@ -600,6 +826,9 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
 chrome.webNavigation.onCommitted.addListener(function (details) {
     if (isSpecialPage(details.url) || details.tabId <= 0 || !G.initSyncComplete) { return; }
 
+    if (details.frameId === 0 && details.url) { // Ensure details.url is present for main frame
+        manageAutoCaptureForTab(details.tabId, details.url);
+    }
     // 刷新页面 检查是否在屏蔽列表中
     if (details.frameId == 0 && details.transitionType == "reload") {
         G.blockUrlSet.delete(details.tabId);
@@ -626,6 +855,10 @@ chrome.webNavigation.onCommitted.addListener(function (details) {
 
     // catch-script 脚本
     G.scriptList.forEach(function (item, script) {
+        if (script === "catch.js") { // If it's catch.js, its injection is now handled by manageAutoCaptureForTab
+            return; // Equivalent to 'continue' in a for loop
+        }
+        // The rest of the original loop logic for other scripts:
         if (!item.tabId.has(details.tabId) || !item.allFrames) { return true; }
 
         const files = [`catch-script/${script}`];
@@ -657,6 +890,29 @@ chrome.webNavigation.onCommitted.addListener(function (details) {
  */
 chrome.tabs.onRemoved.addListener(function (tabId) {
     // 清理缓存数据
+    // New logic for watchedOnTabClose:
+    if (G.autoCaptureEnabled && G.watchedOnTabClose && G.scriptList.get("catch.js")?.tabId.has(tabId)) {
+        const captureState = tabCaptureStates.get(tabId);
+        if (captureState && captureState.isCapturing) {
+            // console.log(`Background: Tab ${tabId} closed, was capturing. Attempting to trigger save. State:`, captureState);
+            chrome.tabs.sendMessage(tabId, {
+                catCatchMessageRelay: true,
+                for: "catchScript",
+                payload: {
+                    action: "doSaveOnTabClose", // New action for catch.js
+                    filenameHint: captureState.filename
+                }
+            }, response => {
+                if (chrome.runtime.lastError) {
+                    // console.warn(`CatCatch: Error sending doSaveOnTabClose to tab ${tabId}: ${chrome.runtime.lastError.message}. Might be too late.`);
+                } else {
+                    // console.log(`CatCatch: doSaveOnTabClose message sent to tab ${tabId}. Response:`, response);
+                }
+            });
+        }
+    }
+    tabCaptureStates.delete(tabId); // Clean up state for the closed tab
+
     chrome.alarms.get("nowClear", function (alarm) {
         !alarm && chrome.alarms.create("nowClear", { when: Date.now() + 1000 });
     });

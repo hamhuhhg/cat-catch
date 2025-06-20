@@ -610,12 +610,31 @@ $("#AutoDown").click(function () {
     });
 });
 // 深度搜索 缓存捕捉 注入脚本
-$("[type='script']").click(function () {
+// $("#catch").click(...) is now handled separately below
+$("[type='script']").not("#catch").click(function () { // Modified selector to exclude #catch
     chrome.runtime.sendMessage({ Message: "script", tabId: G.tabId, script: this.id + ".js" }, function () {
-        G.autoClearMode > 0 && $('#Clear').click();
-        updateButton();
+        if (chrome.runtime.lastError) { console.error(chrome.runtime.lastError); return; }
+        // G.autoClearMode > 0 && $('#Clear').click(); // Original line, reconsider if still needed for other scripts
+        updateButton(); // Refresh button state
     });
 });
+
+$("#catch").click(function () {
+    if (G.autoCaptureEnabled) {
+        chrome.runtime.sendMessage({ Message: "toggleManualCaptureOverride", tabId: G.tabId }, function(response) {
+            if (chrome.runtime.lastError) { console.error(chrome.runtime.lastError); return; }
+            // Button state will be updated via 'buttonStateUpdated' -> getButtonState -> updateButton
+        });
+    } else {
+        // Original logic for when auto-capture is OFF
+        chrome.runtime.sendMessage({ Message: "script", tabId: G.tabId, script: "catch.js" }, function () {
+            if (chrome.runtime.lastError) { console.error(chrome.runtime.lastError); return; }
+            // G.autoClearMode > 0 && $('#Clear').click(); // Original line
+            updateButton(); // Refresh button state
+        });
+    }
+});
+
 // 102以上开启 捕获按钮/注入脚本
 if (G.version >= 102) {
     $("[type='script']").show();
@@ -766,6 +785,7 @@ const interval = setInterval(function () {
     });
     // 获取模拟手机 自动下载 捕获 状态
     updateButton();
+    updateAutoCaptureButtonText(); // Add this call
 
     // 上一次设定的倍数
     $("#playbackRate").val(G.playbackRate);
@@ -804,22 +824,43 @@ window.addEventListener('beforeunload', function () {
 // 按钮状态更新
 function updateButton() {
     chrome.runtime.sendMessage({ Message: "getButtonState", tabId: G.tabId }, function (state) {
+        if (chrome.runtime.lastError) { console.error("Error getting button state:", chrome.runtime.lastError); return; }
+        if (!state) { console.error("Received null state from getButtonState"); return; }
+
         for (let key in state) {
+            if (key === "autoCaptureEnabled" || key === "isManuallyDisabled") continue; // Handled by #catch logic specifically
+
             const $DOM = $(`#${key}`);
+            if (!$DOM.length) continue; // Skip if element doesn't exist
+
             if (key == "MobileUserAgent") {
                 $DOM.html(state.MobileUserAgent ? i18n.closeSimulation : i18n.simulateMobile);
-                continue;
-            }
-            if (key == "AutoDown") {
+            } else if (key == "AutoDown") {
                 $DOM.html(state.AutoDown ? i18n.closeDownload : i18n.autoDownload);
-                continue;
-            }
-            if (key == "enable") {
+            } else if (key == "enable") {
                 $DOM.html(state.enable ? i18n.pause : i18n.enable);
-                continue;
+            } else if (key === "catch") { // Specific handling for #catch button
+                const catchButton = $DOM;
+                const scriptInfo = G.scriptList.get("catch.js");
+                if (state.autoCaptureEnabled) {
+                    if (state.isManuallyDisabled) {
+                        catchButton.html(i18n.resumeAutoCaptureForTab);
+                    } else if (state['catch']) { // catch.js is active (due to auto or manual start before auto)
+                        catchButton.html(i18n.stopAutoCaptureForTab);
+                    } else {
+                        // Auto ON, not manually disabled, but script not active (e.g. blocklisted or error)
+                        catchButton.html(i18n.autoCaptureActiveGlobal);
+                    }
+                } else {
+                    // Original logic for when auto-capture is OFF
+                    catchButton.html(state['catch'] ? scriptInfo.off : scriptInfo.name);
+                }
+            } else { // For other script buttons
+                const scriptInfo = G.scriptList.get(key + ".js");
+                if (scriptInfo) { // Check if scriptInfo exists
+                    $DOM.html(state[key] ? scriptInfo.off : scriptInfo.name);
+                }
             }
-            const script = G.scriptList.get(key + ".js");
-            $DOM.html(state[key] ? script.off : script.name);
         }
     });
 }
@@ -884,6 +925,12 @@ function createCatDownload(data, extra) {
         });
     });
 }
+
+$("#autoCaptureToggle").click(function () {
+    G.autoCaptureEnabled = !G.autoCaptureEnabled;
+    chrome.storage.sync.set({ autoCaptureEnabled: G.autoCaptureEnabled });
+    updateAutoCaptureButtonText();
+});
 
 // 提示
 function Tips(text, delay = 200) {
@@ -985,4 +1032,12 @@ function base64ToHex(base64) {
         hexString += hex;
     }
     return hexString;
+}
+
+function updateAutoCaptureButtonText() {
+    if (G.autoCaptureEnabled) {
+        $("#autoCaptureToggle").html(i18n.autoCapturePopupDisable);
+    } else {
+        $("#autoCaptureToggle").html(i18n.autoCapturePopupEnable);
+    }
 }

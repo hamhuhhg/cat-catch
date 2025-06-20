@@ -4,6 +4,22 @@
     var _key = [];
     chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         if (chrome.runtime.lastError) { return; }
+
+        // New relay logic:
+        if (Message.catCatchMessageRelay && Message.for === "catchScript") {
+            // console.log("content-script: Relaying message to page:", Message.payload);
+            window.postMessage({
+                catCatchInternalMessage: true, // Add a distinct wrapper for catch.js to listen to
+                action: Message.payload.action,
+                settings: Message.payload.settings,
+                tabId: Message.payload.tabId,
+                command: Message.payload.command,
+                // Include any other data background.js might send for catch.js
+            }, "*"); // Or specify target origin if known and fixed
+            sendResponse({status: "relayed", action: Message.payload.action});
+            return true; // Indicate async response
+        }
+
         // 获取页面视频对象
         if (Message.Message == "getVideoState") {
             let videoObj = [];
