@@ -41,6 +41,37 @@ chrome.storage.sync.get(G.OptionLists, function (items) {
                 $(`#${key}`).val(items[key]);
             }
         }
+        // Initialize and add event listener for auto-save checkboxes
+        const masterCheckbox = $("#enableAutoSaveWatched");
+        const subCheckboxes = [$("#saveOnNextVideo"), $("#saveOnTabClose"), $("#saveOnVideoEnd")];
+
+        function updateSubCheckboxesState() {
+            const isMasterChecked = masterCheckbox.prop("checked");
+            subCheckboxes.forEach($checkbox => {
+                $checkbox.prop("disabled", !isMasterChecked);
+                if (!isMasterChecked) {
+                    // Optional: also uncheck sub-options when master is unchecked
+                    // $checkbox.prop("checked", false);
+                    // chrome.storage.sync.set({ [$checkbox.attr('id')]: false }); // Also save this change
+                }
+            });
+        }
+
+        // Initial state update
+        updateSubCheckboxesState();
+
+        // Event listener for master checkbox
+        masterCheckbox.on("click", function() {
+            updateSubCheckboxesState();
+            // Ensure the master checkbox's state is saved (already handled by generic save="click")
+        });
+
+        // Optional: If sub-checkboxes should be unchecked when master is disabled,
+        // ensure their state is also saved if changed by the master.
+        // This might require explicitly calling chrome.storage.sync.set for sub-checkboxes
+        // within updateSubCheckboxesState if they are modified.
+        // However, the current requirement is only to disable them.
+
     }, 100);
 });
 

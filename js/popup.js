@@ -767,6 +767,22 @@ const interval = setInterval(function () {
     // 获取模拟手机 自动下载 捕获 状态
     updateButton();
 
+    // Initialize and set event listener for the auto-save toggle in popup
+    const $popupEnableAutoSaveWatched = $("#popupEnableAutoSaveWatched");
+    // Load initial state from storage
+    chrome.storage.sync.get("enableAutoSaveWatched", function (items) {
+        if (items.enableAutoSaveWatched !== undefined) {
+            $popupEnableAutoSaveWatched.prop("checked", items.enableAutoSaveWatched);
+        } else {
+            // If not in storage, use default from G.OptionLists (false)
+            $popupEnableAutoSaveWatched.prop("checked", G.OptionLists.enableAutoSaveWatched);
+        }
+    });
+    // Save state on change
+    $popupEnableAutoSaveWatched.on("click", function () {
+        chrome.storage.sync.set({ enableAutoSaveWatched: $(this).prop("checked") });
+    });
+
     // 上一次设定的倍数
     $("#playbackRate").val(G.playbackRate);
 

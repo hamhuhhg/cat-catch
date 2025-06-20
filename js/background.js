@@ -660,10 +660,104 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
     chrome.alarms.get("nowClear", function (alarm) {
         !alarm && chrome.alarms.create("nowClear", { when: Date.now() + 1000 });
     });
+    // Auto-save logic for tab closure
+    if (G.enableAutoSaveWatched && G.saveOnTabClose && G.autoCapturedVideos.has(tabId)) {
+        const videoInfo = G.autoCapturedVideos.get(tabId);
+        if (videoInfo.status === 'tracking') { // Check if not already saved by other means
+            handleAutoSave(tabId, videoInfo, 'tabClose');
+        }
+    }
+    // Ensure G.autoCapturedVideos is cleaned up regardless of saving, if the entry exists for this tabId
+    if (G.autoCapturedVideos.has(tabId)) {
+        G.autoCapturedVideos.delete(tabId);
+    }
+
     if (G.initSyncComplete) {
         G.blockUrlSet.has(tabId) && G.blockUrlSet.delete(tabId);
     }
 });
+
+// Actual saving logic for auto-saved videos
+async function handleAutoSave(tabId, videoData, reason) {
+    // videoData is the entry from G.autoCapturedVideos
+    console.log(`AutoSave: Processing save for tab ${tabId}, Reason: ${reason}, URL: ${videoData.mediaUrl}`);
+
+    if (!videoData || !videoData.mediaUrl) {
+        console.error("AutoSave: Invalid videoData or mediaUrl.", videoData);
+        if (G.autoCapturedVideos.has(tabId)) {
+             G.autoCapturedVideos.delete(tabId);
+        }
+        return;
+    }
+
+    // The video is "saved" by ensuring its metadata is in cacheData, making it appear in the popup.
+    // No actual file download is initiated here.
+
+    cacheData[tabId] = cacheData[tabId] || [];
+
+    let existingCacheEntry = cacheData[tabId].find(item => item.url === videoData.mediaUrl);
+
+    if (existingCacheEntry) {
+        console.log(`AutoSave: Video ${videoData.mediaUrl} already in cacheData for tab ${tabId}.`);
+        existingCacheEntry.autoSaved = true;
+        existingCacheEntry.autoSaveReason = reason;
+        existingCacheEntry.lastAutoSavedTime = Date.now();
+    } else {
+        console.log(`AutoSave: Video ${videoData.mediaUrl} not in cacheData for tab ${tabId}. Creating new entry.`);
+
+        // Need to fetch tab info to populate details like title, favIconUrl, webUrl
+        let tabInfo = {};
+        try {
+            tabInfo = await new Promise((resolve, reject) => {
+                chrome.tabs.get(tabId, (tab) => {
+                    if (chrome.runtime.lastError) {
+                        return reject(chrome.runtime.lastError);
+                    }
+                    resolve(tab);
+                });
+            });
+        } catch (e) {
+            console.warn(`AutoSave: Could not get tab info for tabId ${tabId}`, e);
+            // Proceed with what we have from videoData
+        }
+
+        const nameFromUrl = videoData.mediaUrl.substring(videoData.mediaUrl.lastIndexOf('/') + 1).split('?')[0] || videoData.mediaUrl;
+        const extFromName = nameFromUrl.includes('.') ? nameFromUrl.substring(nameFromUrl.lastIndexOf('.') + 1) : 'mp4'; // Default ext
+
+        const newInfo = {
+            name: nameFromUrl,
+            url: videoData.mediaUrl,
+            size: undefined, // Size is often unknown for auto-saved items initially
+            ext: extFromName,
+            type: 'video/' + extFromName, // Best guess for type
+            tabId: tabId,
+            isRegex: false,
+            requestId: `auto_${Date.now()}`, // Unique ID for auto-saved items
+            initiator: tabInfo.url || videoData.mediaUrl, // Page URL or media URL itself
+            requestHeaders: undefined, // Typically not available for videos found by content script like this
+            cookie: undefined,
+            getTime: videoData.startTime || Date.now(),
+            title: videoData.videoTitle || tabInfo.title || "Auto-saved video",
+            favIconUrl: tabInfo.favIconUrl,
+            webUrl: tabInfo.url,
+            autoSaved: true,
+            autoSaveReason: reason,
+            captureType: reason === 'mediaSourceEnd_catch.js' ? 'MediaSource_catch.js' : 'Direct URL',
+            lastAutoSavedTime: Date.now()
+        };
+        cacheData[tabId].push(newInfo);
+        console.log(`AutoSave: Added new entry to cacheData for tab ${tabId}:`, newInfo);
+    }
+
+    // Persist changes to cacheData
+    save(tabId); // This existing function saves cacheData and updates the icon
+
+    // Remove from active tracking map as it has been processed
+    if (G.autoCapturedVideos.has(tabId)) {
+        G.autoCapturedVideos.delete(tabId);
+    }
+    console.log(`AutoSave: Finished processing for tab ${tabId}, reason: ${reason}. autoCapturedVideos size: ${G.autoCapturedVideos.size}`);
+}
 
 /**
  * 浏览器 扩展快捷键

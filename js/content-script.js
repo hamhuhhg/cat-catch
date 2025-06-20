@@ -250,6 +250,20 @@
             delete event.data.action;
             chrome.runtime.sendMessage(event.data);
         }
+        // Relay message from catch-script.js (MediaSource ended) to background.js
+        if (event.data.action == "catCatchMediaSourceEnded") {
+            // console.log("content-script: Relaying catCatchMediaSourceEnded to background", event.data.data);
+            chrome.runtime.sendMessage({
+                Message: "mediaSourceEndedForAutoSave",
+                data: event.data.data
+            }, function(response) {
+                if (chrome.runtime.lastError) {
+                    // console.error("content-script: Error relaying mediaSourceEndedForAutoSave message:", chrome.runtime.lastError.message);
+                } else {
+                    // console.log("content-script: Background response to mediaSourceEndedForAutoSave relay:", response);
+                }
+            });
+        }
     }, false);
 
     function ArrayToBase64(data) {
@@ -268,3 +282,139 @@
         }
     }
 })();
+
+// === Automatic Video Saving Feature - Start ===
+(function() {
+    // To keep track of the video currently considered active for auto-capture in this tab/frame.
+    let currentTabVideoUrl = null;
+    let currentVideoElement = null; // To correctly remove listeners from the right element
+
+    // Using a more specific console log for this feature
+    // console.log("Cat-Catch content script: Auto-save module loaded.");
+
+    document.addEventListener('play', function(event) {
+        const videoElement = event.target;
+
+        if (videoElement.tagName === 'VIDEO') {
+            const newVideoSrc = videoElement.currentSrc || videoElement.src;
+
+            if (!newVideoSrc || newVideoSrc.startsWith('blob:')) {
+                // console.log("Auto-save: Video source is blob or empty, ignoring:", newVideoSrc);
+                return;
+            }
+
+            // console.log('Auto-save: Play event detected:', newVideoSrc, 'Page title:', document.title);
+
+            if (currentTabVideoUrl && newVideoSrc !== currentTabVideoUrl) {
+                // console.log('Auto-save: Next video played. Previous:', currentTabVideoUrl, 'New:', newVideoSrc);
+                chrome.runtime.sendMessage({
+                    Message: "nextVideoPlayedInTab",
+                    data: {
+                        previousMediaUrl: currentTabVideoUrl,
+                        videoTitle: document.title
+                    }
+                }, function(response) {
+                    if (chrome.runtime.lastError) {
+                        // console.error("Auto-save: Error sending nextVideoPlayedInTab message:", chrome.runtime.lastError.message);
+                    } else {
+                        // console.log("Auto-save: Background response to nextVideoPlayedInTab:", response);
+                    }
+                });
+            }
+
+            // Update current video if it's different or if no video was being tracked
+            if (newVideoSrc !== currentTabVideoUrl || !currentVideoElement) {
+                // If there was a previously tracked element, ensure its listeners are cleaned up
+                // This handles cases where a new video plays before the old one formally "ended" or reached 99%
+                if (currentVideoElement && currentVideoElement !== videoElement && currentVideoElement._autoSaveListenersAttached) {
+                    // console.log('Auto-save: Cleaning up listeners from previously tracked video:', currentVideoElement.currentSrc);
+                    cleanupListeners(currentVideoElement);
+                }
+
+                currentTabVideoUrl = newVideoSrc;
+                currentVideoElement = videoElement;
+                // console.log('Auto-save: Now tracking video:', currentTabVideoUrl);
+
+                chrome.runtime.sendMessage({
+                    Message: "videoPlaying",
+                    data: {
+                        mediaUrl: currentTabVideoUrl,
+                        videoTitle: document.title
+                    }
+                }, function(response) {
+                    if (chrome.runtime.lastError) {
+                        // console.error("Auto-save: Error sending videoPlaying message:", chrome.runtime.lastError.message);
+                    } else {
+                        // console.log("Auto-save: Background response to videoPlaying:", response);
+                    }
+                });
+            }
+
+            if (!videoElement._autoSaveListenersAttached) {
+                videoElement._autoSaveListenersAttached = true;
+                // console.log('Auto-save: Attaching specific listeners to:', videoElement.currentSrc);
+                videoElement.addEventListener('timeupdate', handleTimeUpdateForAutoSave);
+                videoElement.addEventListener('ended', handleEndedForAutoSave);
+            }
+        }
+    }, true);
+
+    function handleTimeUpdateForAutoSave() {
+        const video = this;
+        if (video.duration && (video.currentTime / video.duration >= 0.99)) {
+            // console.log('Auto-save: Video nearing end (99% played):', video.currentSrc);
+            chrome.runtime.sendMessage({
+                Message: "videoEnded",
+                data: {
+                    mediaUrl: video.currentSrc,
+                    videoTitle: document.title
+                }
+            }, function(response) {
+                if (chrome.runtime.lastError) {
+                    // console.error("Auto-save: Error sending videoEnded (timeupdate) message:", chrome.runtime.lastError.message);
+                } else {
+                    // console.log("Auto-save: Background response to videoEnded (timeupdate):", response);
+                }
+            });
+            cleanupListeners(video);
+            if (currentVideoElement === video) {
+                currentTabVideoUrl = null;
+                currentVideoElement = null;
+            }
+        }
+    }
+
+    function handleEndedForAutoSave() {
+        const video = this;
+        // console.log('Auto-save: Video ended event:', video.currentSrc);
+        chrome.runtime.sendMessage({
+            Message: "videoEnded",
+            data: {
+                mediaUrl: video.currentSrc,
+                videoTitle: document.title
+            }
+        }, function(response) {
+            if (chrome.runtime.lastError) {
+                // console.error("Auto-save: Error sending videoEnded (ended event) message:", chrome.runtime.lastError.message);
+            } else {
+                // console.log("Auto-save: Background response to videoEnded (ended event):", response);
+            }
+        });
+        cleanupListeners(video);
+        if (currentVideoElement === video) {
+            currentTabVideoUrl = null;
+            currentVideoElement = null;
+        }
+    }
+
+    function cleanupListeners(videoElement) {
+        if (videoElement && videoElement._autoSaveListenersAttached) {
+            // console.log('Auto-save: Cleaning up listeners for:', videoElement.currentSrc);
+            videoElement.removeEventListener('timeupdate', handleTimeUpdateForAutoSave);
+            videoElement.removeEventListener('ended', handleEndedForAutoSave);
+            videoElement._autoSaveListenersAttached = false;
+        }
+    }
+    // console.log("Cat-Catch content script: Auto-save module is active.");
+})();
+// === Automatic Video Saving Feature - End ===

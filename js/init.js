@@ -50,6 +50,7 @@ G.blockUrlSet = new Set();    // 屏蔽网址列表
 G.requestHeaders = new Map();   // 临时储存请求头
 G.urlMap = new Map();   // url查重map
 G.deepSearchTemporarilyClose = null; // 深度搜索临时变量
+G.autoCapturedVideos = new Map(); // For automatic video saving feature
 
 // 初始化当前tabId
 chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
@@ -167,6 +168,10 @@ G.OptionLists = {
     maxLength: G.isMobile ? 999 : 9999,
     sidePanel: false,   // 侧边栏
     deepSearch: false, // 常开深度搜索
+    enableAutoSaveWatched: false,
+    saveOnNextVideo: true,
+    saveOnTabClose: true,
+    saveOnVideoEnd: true,
 };
 // 本地储存的配置
 G.LocalVar = {

@@ -615,6 +615,54 @@
       </div>
     </section>
 
+    <!-- Automatic Watched Video Saving -->
+    <section id="anchorAutoSaveWatched">
+      <h1 class="optionsTitle" data-i18n="autoSaveWatchedTitle">Automatic Watched Video Saving</h1>
+      <div class="optionBox">
+        <div class="list otherOption">
+          <div class="item">
+            <div data-i18n="enableAutoSaveWatchedLabel">Enable Automatic Saving of Watched Videos</div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="enableAutoSaveWatched" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
+          <div class="item sub-item">
+            <div data-i18n="saveOnNextVideoLabel">Save when another video plays in the same tab.</div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="saveOnNextVideo" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
+          <div class="item sub-item">
+            <div data-i18n="saveOnTabCloseLabel">Save when the video's tab is closed.</div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="saveOnTabClose" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
+          <div class="item sub-item">
+            <div data-i18n="saveOnVideoEndLabel">Save when 100% of the video is captured/played.</div>
+            <div class="switch">
+              <label class="switchLabel switchRadius">
+                <input type="checkbox" save="click" id="saveOnVideoEnd" class="switchInput" />
+                <span class="switchRound switchRadius"><em class="switchRoundBtn switchRadius"></em></span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="flex-end">
+          <button type="button" class="resetOption" data-i18n="resetSettings"></button>
+        </div>
+      </div>
+    </section>
+
     <!-- 其他设置 -->
     <section id="anchorOtherSettings">
       <h1 class="optionsTitle" data-i18n="otherSettings"></h1>

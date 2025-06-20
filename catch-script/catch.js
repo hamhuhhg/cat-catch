@@ -593,9 +593,28 @@
                             if (localStorage.getItem("CatCatchCatch_autoDown") == "checked") {
                                 setTimeout(() => this.catchDownload(), 500);
                             }
+
+                            // Notify content script (and then background) that MediaSource capture ended
+                            // Send this regardless of auto-capture mode for now; background can filter.
+                            const mediaUrl = this.catchMedia && this.catchMedia.length > 0 && this.catchMedia[0].bufferList.length > 0
+                                             ? "mediasource_capture_complete" // Actual URL of MediaSource isn't easily available here
+                                             : "unknown_mediasource";
+                            const title = this.fileName && this.fileName.innerHTML ? this.fileName.innerHTML.trim() : document.title;
+
+                            window.postMessage({
+                                action: "catCatchMediaSourceEnded",
+                                data: {
+                                    mediaUrl: mediaUrl, // More of an identifier
+                                    title: title,
+                                    source: "catch-script"
+                                }
+                            }, "*");
+                            // console.log("catch.js: Sent catCatchMediaSourceEnded message", { mediaUrl, title });
+
                         }
                     } catch (error) {
                         console.error("endOfStream 代理错误:", error);
+                        // Still attempt to apply the original function even if our logic fails
                         return Reflect.apply(target, thisArg, argumentsList);
                     }
                 }
