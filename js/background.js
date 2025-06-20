@@ -354,57 +354,63 @@ function save(tabId) {
  * 监听 扩展 message 事件
  */
 chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
-    if (chrome.runtime.lastError) { return; }
+    if (chrome.runtime.lastError) {
+        // console.error("Runtime error in onMessage:", chrome.runtime.lastError.message);
+        return;
+    }
 
     const tabId = sender.tab ? sender.tab.id : Message.tabId;
     const frameId = sender.frameId || 0;
 
     if (Message.action && Message.action.startsWith("video")) {
+        // Video-related actions
         if (!tabId) {
-            // console.warn("Background: Video message without tabId, ignoring.", Message);
+            // console.warn("Background: Video message without tabId.", Message);
         } else {
             G.activeVideoStates[tabId] = G.activeVideoStates[tabId] || {};
 
-            // --- BEGIN NEW SWITCH BLOCK FOR VIDEO ACTIONS ---
             switch (Message.action) {
                 case "videoLoadingSource":
-                case "videoMetadataReady":
                     G.activeVideoStates[tabId][Message.videoId] = {
                         ...(G.activeVideoStates[tabId][Message.videoId] || {}),
-                        src: Message.src,
-                        duration: Message.duration,
-                        currentTime: Message.currentTime || 0,
+                        src: Message.src, duration: Message.duration, currentTime: Message.currentTime || 0,
                         isPlaying: (G.activeVideoStates[tabId][Message.videoId] && G.activeVideoStates[tabId][Message.videoId].isPlaying) || false,
-                        initialDetectionDone: Message.action === "videoMetadataReady" || (G.activeVideoStates[tabId][Message.videoId] && G.activeVideoStates[tabId][Message.videoId].initialDetectionDone),
+                        initialDetectionDone: false,
                         tabUrl: sender.tab ? sender.tab.url : (G.activeVideoStates[tabId][Message.videoId] ? G.activeVideoStates[tabId][Message.videoId].tabUrl : null),
-                        frameId: frameId,
-                        error: null,
-                        lastUpdateTime: Date.now()
+                        frameId: frameId, error: null, lastUpdateTime: Date.now()
                     };
                     break;
-
+                case "videoMetadataReady":
+                     G.activeVideoStates[tabId][Message.videoId] = {
+                        ...(G.activeVideoStates[tabId][Message.videoId] || {}),
+                        src: Message.src, duration: Message.duration, currentTime: Message.currentTime || 0,
+                        isPlaying: (G.activeVideoStates[tabId][Message.videoId] && G.activeVideoStates[tabId][Message.videoId].isPlaying) || false,
+                        initialDetectionDone: true,
+                        tabUrl: sender.tab ? sender.tab.url : (G.activeVideoStates[tabId][Message.videoId] ? G.activeVideoStates[tabId][Message.videoId].tabUrl : null),
+                        frameId: frameId, error: null, lastUpdateTime: Date.now()
+                    };
+                    break;
                 case "videoPlaybackStarted":
                     if (!G.activeVideoStates[tabId][Message.videoId]) {
-                        G.activeVideoStates[tabId][Message.videoId] = { src: Message.src, duration: Message.duration, tabUrl: sender.tab ? sender.tab.url : null, frameId: frameId, error: null };
+                        G.activeVideoStates[tabId][Message.videoId] = { src: Message.src, duration: Message.duration, tabUrl: sender.tab ? sender.tab.url : null, frameId: frameId, error: null, initialDetectionDone: true };
+                    } else {
+                         G.activeVideoStates[tabId][Message.videoId].initialDetectionDone = true;
                     }
                     G.activeVideoStates[tabId][Message.videoId] = {
                         ...G.activeVideoStates[tabId][Message.videoId],
                         currentTime: Message.currentTime,
                         duration: Message.duration || G.activeVideoStates[tabId][Message.videoId].duration,
-                        isPlaying: true,
-                        lastUpdateTime: Date.now()
+                        isPlaying: true, lastUpdateTime: Date.now()
                     };
-
                     if (G.captureOnNextVideoPlayed) {
                         for (const vidId_key in G.activeVideoStates[tabId]) {
                             if (vidId_key !== Message.videoId && G.activeVideoStates[tabId][vidId_key].isPlaying) {
-                                initiateAutomaticCapture(G.activeVideoStates[tabId][vidId_key], vidId_key, sender.tab);
+                                if (typeof initiateAutomaticCapture === 'function') initiateAutomaticCapture(G.activeVideoStates[tabId][vidId_key], vidId_key, sender.tab);
                                 G.activeVideoStates[tabId][vidId_key].isPlaying = false;
                             }
                         }
                     }
                     break;
-
                 case "videoPlaybackPaused":
                     if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
                         G.activeVideoStates[tabId][Message.videoId].isPlaying = false;
@@ -412,301 +418,235 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
                         G.activeVideoStates[tabId][Message.videoId].lastUpdateTime = Date.now();
                     }
                     break;
-
                 case "videoProgressUpdated":
                     if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
                         G.activeVideoStates[tabId][Message.videoId].currentTime = Message.currentTime;
                         G.activeVideoStates[tabId][Message.videoId].lastUpdateTime = Date.now();
-
-                        if (G.captureOnMinWatchTime &&
-                            !G.activeVideoStates[tabId][Message.videoId].hasBeenCaptured &&
+                        if (!G.activeVideoStates[tabId][Message.videoId].initialDetectionDone && Message.duration > 0) {
+                            G.activeVideoStates[tabId][Message.videoId].initialDetectionDone = true;
+                            G.activeVideoStates[tabId][Message.videoId].duration = Message.duration;
+                        }
+                        if (G.captureOnMinWatchTime && !G.activeVideoStates[tabId][Message.videoId].hasBeenCaptured &&
+                            G.activeVideoStates[tabId][Message.videoId].initialDetectionDone &&
                             G.activeVideoStates[tabId][Message.videoId].duration > 0 &&
                             Message.currentTime >= G.minWatchTimeSeconds) {
-                            initiateAutomaticCapture(G.activeVideoStates[tabId][Message.videoId], Message.videoId, sender.tab);
+                            if (typeof initiateAutomaticCapture === 'function') initiateAutomaticCapture(G.activeVideoStates[tabId][Message.videoId], Message.videoId, sender.tab);
                         }
                     }
                     break;
-
                 case "videoHasEnded":
                     if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
                         G.activeVideoStates[tabId][Message.videoId].isPlaying = false;
                         G.activeVideoStates[tabId][Message.videoId].currentTime = Message.duration;
                         G.activeVideoStates[tabId][Message.videoId].lastUpdateTime = Date.now();
-
                         if (G.captureOnVideoEnd) {
-                            initiateAutomaticCapture(G.activeVideoStates[tabId][Message.videoId], Message.videoId, sender.tab);
+                            if (typeof initiateAutomaticCapture === 'function') initiateAutomaticCapture(G.activeVideoStates[tabId][Message.videoId], Message.videoId, sender.tab);
                         }
                     }
                     break;
-
                 case "videoNewSourceLoaded":
                     G.activeVideoStates[tabId][Message.videoId] = {
-                        src: Message.src,
-                        duration: Message.duration,
-                        currentTime: Message.currentTime || 0,
-                        isPlaying: false,
-                        initialDetectionDone: true,
-                        hasBeenCaptured: false,
-                        tabUrl: sender.tab ? sender.tab.url : null,
-                        frameId: frameId,
-                        error: null,
-                        lastUpdateTime: Date.now()
+                        src: Message.src, duration: Message.duration, currentTime: Message.currentTime || 0,
+                        isPlaying: false, initialDetectionDone: false, hasBeenCaptured: false,
+                        tabUrl: sender.tab ? sender.tab.url : null, frameId: frameId, error: null, lastUpdateTime: Date.now()
                     };
                     break;
-
                 case "videoElementRemoved":
                     if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
                         delete G.activeVideoStates[tabId][Message.videoId];
-                        if (Object.keys(G.activeVideoStates[tabId]).length === 0) {
-                            delete G.activeVideoStates[tabId];
-                        }
+                        if (Object.keys(G.activeVideoStates[tabId]).length === 0) delete G.activeVideoStates[tabId];
                     }
                     break;
-
                 case "videoError":
                     if (G.activeVideoStates[tabId] && G.activeVideoStates[tabId][Message.videoId]) {
                         G.activeVideoStates[tabId][Message.videoId].error = Message.error;
                         G.activeVideoStates[tabId][Message.videoId].isPlaying = false;
                     }
                     break;
+                default:
+                    // console.warn("Background: Unknown video action:", Message.action);
+                    break;
             }
-            // --- END NEW SWITCH BLOCK FOR VIDEO ACTIONS ---
         }
-        // Return true for async sendResponse if any video actions use it,
-        // or ensure it falls through to other handlers that might.
-        // For now, assuming video actions don't use sendResponse directly.
+        return true; // Keep channel open for potential async response from video handlers or signify handled.
     }
-    // ELSE IF LADDER FOR EXISTING Message.Message handlers
-    else if (!G.initLocalComplete || !G.initSyncComplete) { // Moved this check here
-        sendResponse("error");
-        return true;
-    }
-    // 以下检查是否有 tabId 不存在使用当前标签
-    else { // Added else to group existing logic
-        Message.tabId = Message.tabId ?? G.tabId; // This was outside the else, moved in
+    else { // Non-video messages
+        if (!G.initLocalComplete || !G.initSyncComplete) {
+            if (typeof sendResponse === 'function') sendResponse("error");
+            return true;
+        }
 
-        // 从缓存中保存数据到本地
+        Message.tabId = Message.tabId ?? G.tabId; // Default tabId for non-video messages
+
         if (Message.Message == "pushData") {
-        (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
-        sendResponse("ok");
-        return true;
-    }
-    // 获取所有数据
-    if (Message.Message == "getAllData") {
-        sendResponse(cacheData);
-        return true;
-    }
-    /**
-     * 设置扩展图标数字
-     * 提供 type 删除标签为 tabId 的数字
-     * 不提供type 删除所有标签的数字
-     */
-    if (Message.Message == "ClearIcon") {
-        Message.type ? SetIcon({ tabId: Message.tabId }) : SetIcon();
-        sendResponse("ok");
-        return true;
-    }
-    // 启用/禁用扩展
-    if (Message.Message == "enable") {
-        G.enable = !G.enable;
-        chrome.storage.sync.set({ enable: G.enable });
-        chrome.action.setIcon({ path: G.enable ? "/img/icon.png" : "/img/icon-disable.png" });
-        sendResponse(G.enable);
-        return true;
-    }
-    /**
-     * 提供requestId数组 获取指定的数据
-     */
-    if (Message.Message == "getData" && Message.requestId) {
-        // 判断Message.requestId是否数组
-        if (!Array.isArray(Message.requestId)) {
-            Message.requestId = [Message.requestId];
+            (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
         }
-        const response = [];
-        if (Message.requestId.length) {
-            for (let item in cacheData) {
-                for (let data of cacheData[item]) {
-                    if (Message.requestId.includes(data.requestId)) {
-                        response.push(data);
+        else if (Message.Message == "getAllData") {
+            if (typeof sendResponse === 'function') sendResponse(cacheData);
+            return true;
+        }
+        else if (Message.Message == "ClearIcon") {
+            Message.type ? SetIcon({ tabId: Message.tabId }) : SetIcon();
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
+        }
+        else if (Message.Message == "enable") {
+            G.enable = !G.enable;
+            chrome.storage.sync.set({ enable: G.enable });
+            chrome.action.setIcon({ path: G.enable ? "/img/icon.png" : "/img/icon-disable.png" });
+            if (typeof sendResponse === 'function') sendResponse(G.enable);
+            return true;
+        }
+        else if (Message.Message == "getData" && Message.requestId) {
+            if (!Array.isArray(Message.requestId)) Message.requestId = [Message.requestId];
+            const responseData = [];
+            if (Message.requestId.length) {
+                for (let item_key_gd in cacheData) {
+                    for (let data_item of cacheData[item_key_gd]) {
+                        if (Message.requestId.includes(data_item.requestId)) responseData.push(data_item);
                     }
                 }
             }
-        }
-        sendResponse(response.length ? response : "error");
-        return true;
-    }
-    /**
-     * 提供 tabId 获取该标签数据
-     */
-    if (Message.Message == "getData") {
-        sendResponse(cacheData[Message.tabId]);
-        return true;
-    }
-    /**
-     * 获取各按钮状态
-     * 模拟手机 自动下载 启用 以及各种脚本状态
-     */
-    if (Message.Message == "getButtonState") {
-        let state = {
-            MobileUserAgent: G.featMobileTabId.has(Message.tabId),
-            AutoDown: G.featAutoDownTabId.has(Message.tabId),
-            enable: G.enable,
-            globalAutoDownloadEnabled: G.globalAutoDownloadEnabled,
-        }
-        G.scriptList.forEach(function (item, key) {
-            state[item.key] = item.tabId.has(Message.tabId);
-        });
-        sendResponse(state);
-        return true;
-    }
-    // Toggle Global Auto Download
-    if (Message.Message == "toggleGlobalAutoDownload") {
-        G.globalAutoDownloadEnabled = !G.globalAutoDownloadEnabled;
-        chrome.storage.sync.set({ globalAutoDownloadEnabled: G.globalAutoDownloadEnabled });
-        sendResponse(G.globalAutoDownloadEnabled);
-        return true;
-    }
-    // 对tabId的标签 进行模拟手机操作
-    if (Message.Message == "mobileUserAgent") {
-        mobileUserAgent(Message.tabId, !G.featMobileTabId.has(Message.tabId));
-        chrome.tabs.reload(Message.tabId, { bypassCache: true });
-        sendResponse("ok");
-        return true;
-    }
-    // 对tabId的标签 开启 关闭 自动下载
-    if (Message.Message == "autoDown") {
-        if (G.featAutoDownTabId.has(Message.tabId)) {
-            G.featAutoDownTabId.delete(Message.tabId);
-        } else {
-            G.featAutoDownTabId.add(Message.tabId);
-        }
-        (chrome.storage.session ?? chrome.storage.local).set({ featAutoDownTabId: Array.from(G.featAutoDownTabId) });
-        sendResponse("ok");
-        return true;
-    }
-    // 对tabId的标签 脚本注入或删除
-    if (Message.Message == "script") {
-        if (!G.scriptList.has(Message.script)) {
-            sendResponse("error no exists");
-            return false;
-        }
-        const script = G.scriptList.get(Message.script);
-        const scriptTabid = script.tabId;
-        const refresh = Message.refresh ?? script.refresh;
-        if (scriptTabid.has(Message.tabId)) {
-            scriptTabid.delete(Message.tabId);
-            if (Message.script == "search.js") {
-                G.deepSearchTemporarilyClose = Message.tabId;
-            }
-            refresh && chrome.tabs.reload(Message.tabId, { bypassCache: true });
-            sendResponse("ok");
+            if (typeof sendResponse === 'function') sendResponse(responseData.length ? responseData : "error");
             return true;
         }
-        scriptTabid.add(Message.tabId);
-        if (refresh) {
+        else if (Message.Message == "getData") {
+            if (typeof sendResponse === 'function') sendResponse(cacheData[Message.tabId]);
+            return true;
+        }
+        else if (Message.Message == "getButtonState") {
+            let state = {
+                MobileUserAgent: G.featMobileTabId.has(Message.tabId),
+                AutoDown: G.featAutoDownTabId.has(Message.tabId),
+                enable: G.enable,
+                globalAutoDownloadEnabled: G.globalAutoDownloadEnabled,
+            };
+            G.scriptList.forEach((item, key) => { state[item.key] = item.tabId.has(Message.tabId); });
+            if (typeof sendResponse === 'function') sendResponse(state);
+            return true;
+        }
+        else if (Message.Message == "toggleGlobalAutoDownload") {
+            G.globalAutoDownloadEnabled = !G.globalAutoDownloadEnabled;
+            chrome.storage.sync.set({ globalAutoDownloadEnabled: G.globalAutoDownloadEnabled });
+            if (typeof sendResponse === 'function') sendResponse(G.globalAutoDownloadEnabled);
+            return true;
+        }
+        else if (Message.Message == "mobileUserAgent") {
+            mobileUserAgent(Message.tabId, !G.featMobileTabId.has(Message.tabId));
             chrome.tabs.reload(Message.tabId, { bypassCache: true });
-        } else {
-            const files = [`catch-script/${Message.script}`];
-            script.i18n && files.unshift("catch-script/i18n.js");
-            chrome.scripting.executeScript({
-                target: { tabId: Message.tabId, allFrames: script.allFrames },
-                files: files,
-                injectImmediately: true,
-                world: script.world
-            });
-        }
-        sendResponse("ok");
-        return true;
-    }
-    // 脚本注入 脚本申请多语言文件
-    if (Message.Message == "scriptI18n") {
-        chrome.scripting.executeScript({
-            target: { tabId: Message.tabId, allFrames: true },
-            files: ["catch-script/i18n.js"],
-            injectImmediately: true,
-            world: "MAIN"
-        });
-        sendResponse("ok");
-        return true;
-    }
-    // Heart Beat
-    if (Message.Message == "HeartBeat") {
-        chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-            if (tabs[0] && tabs[0].id) {
-                G.tabId = tabs[0].id;
-            }
-        });
-        sendResponse("HeartBeat OK");
-        return true;
-    }
-    // 清理数据
-    if (Message.Message == "clearData") {
-        // 当前标签
-        if (Message.type) {
-            delete cacheData[Message.tabId];
-            (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
-            clearRedundant();
-            sendResponse("OK");
+            if (typeof sendResponse === 'function') sendResponse("ok");
             return true;
         }
-        // 其他标签
-        for (let item in cacheData) {
-            if (item == Message.tabId) { continue; }
-            delete cacheData[item];
+        else if (Message.Message == "autoDown") {
+            if (G.featAutoDownTabId.has(Message.tabId)) G.featAutoDownTabId.delete(Message.tabId);
+            else G.featAutoDownTabId.add(Message.tabId);
+            (chrome.storage.session ?? chrome.storage.local).set({ featAutoDownTabId: Array.from(G.featAutoDownTabId) });
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
         }
-        (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
-        clearRedundant();
-        sendResponse("OK");
-        return true;
-    }
-    // 清理冗余数据
-    if (Message.Message == "clearRedundant") {
-        clearRedundant();
-        sendResponse("OK");
-        return true;
-    }
-    // 从 content-script 或 catch-script 传来的媒体url
-    if (Message.Message == "addMedia") {
-        chrome.tabs.query({}, function (tabs) {
-            for (let item of tabs) {
-                if (item.url == Message.href) {
-                    findMedia({ url: Message.url, tabId: item.id, extraExt: Message.extraExt, mime: Message.mime, requestId: Message.requestId, requestHeaders: Message.requestHeaders }, true, true);
-                    return true;
-                }
-            }
-            findMedia({ url: Message.url, tabId: -1, extraExt: Message.extraExt, mime: Message.mime, requestId: Message.requestId, initiator: Message.href, requestHeaders: Message.requestHeaders }, true, true);
-        });
-        sendResponse("ok");
-        return true;
-    }
-    // ffmpeg网页通信
-    if (Message.Message == "catCatchFFmpeg") {
-        const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
-        chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, function (tabs) {
-            if (chrome.runtime.lastError || !tabs.length) {
-                chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, function (tab) {
-                    if (chrome.runtime.lastError) { return; }
-                    G.ffmpegConfig.tab = tab.id;
-                    G.ffmpegConfig.cacheData.push(data);
-                });
+        else if (Message.Message == "script") {
+            if (!G.scriptList.has(Message.script)) {
+                if (typeof sendResponse === 'function') sendResponse("error no exists");
                 return true;
             }
-            if (tabs[0].status == "complete") {
-                chrome.tabs.sendMessage(tabs[0].id, data);
+            const script = G.scriptList.get(Message.script);
+            const scriptTabid = script.tabId;
+            const refresh = Message.refresh ?? script.refresh;
+            if (scriptTabid.has(Message.tabId)) {
+                scriptTabid.delete(Message.tabId);
+                if (Message.script == "search.js") G.deepSearchTemporarilyClose = Message.tabId;
+                refresh && chrome.tabs.reload(Message.tabId, { bypassCache: true });
             } else {
-                G.ffmpegConfig.tab = tabs[0].id;
-                G.ffmpegConfig.cacheData.push(data);
+                scriptTabid.add(Message.tabId);
+                if (refresh) {
+                    chrome.tabs.reload(Message.tabId, { bypassCache: true });
+                } else {
+                    const files = [`catch-script/${Message.script}`];
+                    script.i18n && files.unshift("catch-script/i18n.js");
+                    chrome.scripting.executeScript({
+                        target: { tabId: Message.tabId, allFrames: script.allFrames },
+                        files: files, injectImmediately: true, world: script.world
+                    });
+                }
             }
-        });
-        sendResponse("ok");
-        return true;
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
+        }
+        else if (Message.Message == "scriptI18n") {
+            chrome.scripting.executeScript({
+                target: { tabId: Message.tabId, allFrames: true },
+                files: ["catch-script/i18n.js"], injectImmediately: true, world: "MAIN"
+            });
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
+        }
+        else if (Message.Message == "HeartBeat") {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (tabs[0] && tabs[0].id) G.tabId = tabs[0].id;
+                if (typeof sendResponse === 'function') sendResponse("HeartBeat OK");
+            });
+            return true;
+        }
+        else if (Message.Message == "clearData") {
+            if (Message.type) delete cacheData[Message.tabId];
+            else {
+                for (let item_key_cd in cacheData) {
+                    if (item_key_cd == Message.tabId) continue;
+                    delete cacheData[item_key_cd];
+                }
+            }
+            (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
+            clearRedundant();
+            if (typeof sendResponse === 'function') sendResponse("OK");
+            return true;
+        }
+        else if (Message.Message == "clearRedundant") {
+            clearRedundant();
+            if (typeof sendResponse === 'function') sendResponse("OK");
+            return true;
+        }
+        else if (Message.Message == "addMedia") {
+            chrome.tabs.query({}, (tabs) => {
+                let found_am = false;
+                for (let item_am of tabs) {
+                    if (item_am.url == Message.href) {
+                        if (typeof findMedia === 'function') findMedia({ url: Message.url, tabId: item_am.id, extraExt: Message.extraExt, mime: Message.mime, requestId: Message.requestId, requestHeaders: Message.requestHeaders }, true, true);
+                        found_am = true; break;
+                    }
+                }
+                if (!found_am) {
+                    if (typeof findMedia === 'function') findMedia({ url: Message.url, tabId: -1, extraExt: Message.extraExt, mime: Message.mime, requestId: Message.requestId, initiator: Message.href, requestHeaders: Message.requestHeaders }, true, true);
+                }
+            });
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
+        }
+        else if (Message.Message == "catCatchFFmpeg") {
+            const dataToFFmpeg_msg = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
+            chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, (tabs) => {
+                if (chrome.runtime.lastError || !tabs.length) {
+                    chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, (tab) => {
+                        if (chrome.runtime.lastError) return;
+                        G.ffmpegConfig.tab = tab.id;
+                        G.ffmpegConfig.cacheData.push(dataToFFmpeg_msg);
+                    });
+                } else {
+                    if (tabs[0].status == "complete") chrome.tabs.sendMessage(tabs[0].id, dataToFFmpeg_msg);
+                    else { G.ffmpegConfig.tab = tabs[0].id; G.ffmpegConfig.cacheData.push(dataToFFmpeg_msg); }
+                }
+            });
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
+        }
+        else if (Message.Message == "send2local" && G.send2local) {
+            try { if (typeof send2local === 'function') send2local(Message.action, Message.data, Message.tabId); } catch (e) { console.log(e); }
+            if (typeof sendResponse === 'function') sendResponse("ok");
+            return true;
+        }
     }
-    // 发送数据到本地
-    if (Message.Message == "send2local" && G.send2local) {
-        try { send2local(Message.action, Message.data, Message.tabId); } catch (e) { console.log(e); }
-        sendResponse("ok");
-        return true;
-    }
+    return true; // Default return for the listener
 });
 
 // 选定标签 更新G.tabId
