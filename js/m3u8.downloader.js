@@ -210,6 +210,54 @@ class Downloader {
         this.emit('start', fragment, options);
 
         // 开始下载
+        if (fragment.isBlobUrl === true) {
+            // console.log("Downloader: Direct download for blob URL:", fragment.url);
+            if (!chrome.downloads) {
+                this.emit('downloadError', fragment, { cause: "DownloadsAPIMissing", message: "chrome.downloads API not available." });
+                this.running--; // Decrement running count as we are returning
+                if (!directDownload && this.index < this.fragments.length && this.state !== 'abort') {
+                    this.downloader(); // Try next if in queue
+                }
+                return;
+            }
+            chrome.downloads.download({
+                url: fragment.url,
+                filename: fragment.downFileName, // Ensure this is correctly populated
+                saveAs: G.saveAs // Assumes G is accessible in this context
+            }, (downloadId) => {
+                if (chrome.runtime.lastError) {
+                    console.error(`Downloader: Blob download error for ${fragment.downFileName}: ${chrome.runtime.lastError.message}`);
+                    this.emit('downloadError', fragment, { cause: "BlobDownloadInternalError", message: chrome.runtime.lastError.message });
+                    // No need to call this.downloader() here as finally() block will handle it.
+                } else {
+                    fragment.downId = downloadId;
+                    // console.log(`Downloader: Blob URL download started for ${fragment.downFileName}, downloadId: ${downloadId}`);
+                    // The 'completed' event for this fragment will be triggered by the global chrome.downloads.onChanged listener
+                    // in downloader.js, which will then update UI and potentially call down.emit('completed').
+                    // To ensure consistency, we can manually mark success here for internal tracking if needed,
+                    // or rely on onChanged to eventually call a method that updates Downloader's internal state.
+                    // For now, we assume onChanged in downloader.js will correctly update the UI
+                    // and this Downloader instance might not need further specific notification for this blob fragment.
+                    // However, we must ensure the success count and running count are handled.
+                    this.success++;
+                    this.emit('completed', null, fragment); // Emit completed with null buffer, as it's handled by browser
+                    if (this.success === this.fragments.length) {
+                        this.state = 'done';
+                        this.emit('allCompleted', this.buffer, this.fragments);
+                    }
+                }
+                // this.running--; // Moved to finally block
+                // if (!directDownload && this.index < this.fragments.length && this.state !== 'abort') {
+                //    this.downloader();
+                // }
+            });
+            this.running--; // Decrement running count as we are returning (or use finally for this)
+            if (!directDownload && this.index < this.fragments.length && this.state !== 'abort') {
+                 this.downloader(); // Try next if in queue
+            }
+            return; // Bypass normal fetch logic
+        }
+
         fetch(fragment.url, options)
             .then(response => {
                 if (!response.ok) {

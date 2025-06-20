@@ -10,6 +10,7 @@
             this.catchMedia = [];   // 捕获的媒体数据
             this.mediaSize = 0; // 捕获的媒体数据大小
             this.setFileName = null;    // 文件名
+            this.silentMode = false; // For automatic video saving UI suppression
 
             // 移动面板相关属性
             this.x = 0;
@@ -105,6 +106,10 @@
          * 创建UI元素
          */
         createUI() {
+            if (this.silentMode) {
+                // console.log("CatCatch: Silent mode enabled, UI creation skipped.");
+                return;
+            }
             const buttonStyle = 'style="border:solid 1px #000;margin:2px;padding:2px;background:#fff;border-radius:4px;border:solid 1px #c7c7c780;color:#000;"';
             const checkboxStyle = 'style="-webkit-appearance: auto;"';
 
@@ -920,4 +925,48 @@
 
     // 创建并启动CatCatcher实例
     const catCatcher = new CatCatcher();
+
+    // Add message listener for external control (e.g., from content-script)
+    window.addEventListener('message', (event) => {
+        if (!event.data || !event.data.action) {
+            return;
+        }
+
+        if (event.data.action === "setCatCatchSilentMode") {
+            // console.log("catch-script: Received setCatCatchSilentMode");
+            catCatcher.silentMode = true;
+            if (catCatcher.catCatch && catCatcher.catCatch.style) {
+                catCatcher.catCatch.style.display = 'none';
+            }
+        } else if (event.data.action === "getCatCatchDataRequest") {
+            // console.log("catch-script: Received getCatCatchDataRequest");
+            if (catCatcher.catchMedia && catCatcher.catchMedia.length > 0 && catCatcher.catchMedia[0].bufferList.length > 0) {
+                // For simplicity, assumes the first track is the one of interest or it's a single stream.
+                // More complex scenarios might involve selecting specific tracks.
+                const firstTrack = catCatcher.catchMedia[0];
+                try {
+                    const fileBlob = new Blob(firstTrack.bufferList, { type: firstTrack.mimeType });
+                    const blobUrl = URL.createObjectURL(fileBlob);
+                    const fileName = catCatcher.fileName && catCatcher.fileName.innerHTML
+                                     ? catCatcher.fileName.innerHTML.trim()
+                                     : (document.title || 'captured_video') + '.' + (firstTrack.mimeType.split('/')[1] || 'mp4');
+
+                    window.postMessage({
+                        action: "catCatchDataResponse",
+                        payload: {
+                            blobUrl: blobUrl,
+                            fileName: fileName,
+                            mimeType: firstTrack.mimeType,
+                            size: fileBlob.size
+                        }
+                    }, "*");
+                } catch (e) {
+                    console.error("Error creating blob in catch-script", e);
+                    window.postMessage({ action: "catCatchDataResponse", payload: { error: "Error creating Blob: " + e.message } }, "*");
+                }
+            } else {
+                window.postMessage({ action: "catCatchDataResponse", payload: { error: "No data captured or available." } }, "*");
+            }
+        }
+    });
 })();

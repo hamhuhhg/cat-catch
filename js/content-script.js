@@ -169,6 +169,21 @@
             sendResponse(document.documentElement.outerHTML);
             return true;
         }
+
+        // Messages from background script for catch-script control
+        if (Message.Message === "setCatchScriptSilentMode") {
+            // console.log("content-script: Received setCatchScriptSilentMode, forwarding to catch-script");
+            window.postMessage({ action: "setCatCatchSilentMode", tabId: Message.tabId }, "*");
+            sendResponse({status: "ok_sent_to_catch_script"});
+            return true;
+        }
+        if (Message.Message === "getCapturedMediaDataFromCatchScript") {
+            // console.log("content-script: Received getCapturedMediaDataFromCatchScript, forwarding to catch-script");
+            window.postMessage({ action: "getCatCatchDataRequest", originTabId: Message.tabId }, "*");
+            // This response is just an ack; actual data will come via a separate message flow
+            sendResponse({status: "request_sent_to_catch_script"});
+            return true;
+        }
     });
 
     // Heart Beat
@@ -261,6 +276,22 @@
                     // console.error("content-script: Error relaying mediaSourceEndedForAutoSave message:", chrome.runtime.lastError.message);
                 } else {
                     // console.log("content-script: Background response to mediaSourceEndedForAutoSave relay:", response);
+                }
+            });
+        }
+        // Relay data response from catch-script.js to background.js
+        if (event.data.action === "catCatchDataResponse") {
+            // console.log("content-script: Relaying catCatchDataResponse to background", event.data.payload);
+            chrome.runtime.sendMessage({
+                Message: "capturedMediaDataFromCatchScript", // This is the message background.js will listen for
+                payload: event.data.payload
+                // Background will use sender.tab.id for the sourceTabId if needed,
+                // or it could be explicitly passed if event.data.originTabId was reliably set by catch-script.
+            }, function(response) {
+                if (chrome.runtime.lastError) {
+                    // console.error("content-script: Error relaying catCatchDataResponse message:", chrome.runtime.lastError.message);
+                } else {
+                    // console.log("content-script: Background response to catCatchDataResponse relay:", response);
                 }
             });
         }
