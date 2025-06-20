@@ -350,9 +350,6 @@ function save(tabId) {
     cacheData[tabId] && SetIcon({ number: cacheData[tabId].length, tabId: tabId });
 }
 
-/**
- * 监听 扩展 message 事件
- */
 chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     if (chrome.runtime.lastError) {
         // console.error("Runtime error in onMessage:", chrome.runtime.lastError.message);

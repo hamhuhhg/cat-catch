@@ -41,30 +41,31 @@ const i18n = new Proxy(chrome.i18n.getMessage, {
 });
 // 全局变量
 self.G = {};
-G.initSyncComplete = false;
-G.initLocalComplete = false;
+self.G.initSyncComplete = false;
+self.G.initLocalComplete = false;
+self.G.enable = false; // <--- ENSURE THIS IS THE INITIAL STATE FOR G.enable
+
 // 缓存数据
-var cacheData = { init: true };
-G.blackList = new Set();    // 正则屏蔽资源列表
-G.blockUrlSet = new Set();    // 屏蔽网址列表
-G.requestHeaders = new Map();   // 临时储存请求头
-G.urlMap = new Map();   // url查重map
-G.deepSearchTemporarilyClose = null; // 深度搜索临时变量
+var cacheData = { init: true }; // cacheData remains a global var as per existing structure
+
+self.G.blackList = new Set();
+self.G.blockUrlSet = new Set();
+self.G.requestHeaders = new Map();
+self.G.urlMap = new Map();
+self.G.deepSearchTemporarilyClose = null;
 
 // 初始化当前tabId
 chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
     if (tabs[0] && tabs[0].id) {
-        G.tabId = tabs[0].id;
+        self.G.tabId = tabs[0].id;
     } else {
-        G.tabId = -1;
+        self.G.tabId = -1;
     }
 });
 
-// 手机浏览器
-G.isMobile = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
+self.G.isMobile = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent);
 
-// 所有设置变量 默认值
-G.OptionLists = {
+self.G.OptionLists = {
     Ext: [
         { "ext": "flv", "size": 0, "state": true },
         { "ext": "hlv", "size": 0, "state": true },
@@ -175,19 +176,19 @@ G.OptionLists = {
     minWatchTimeSeconds: 30,
 };
 // 本地储存的配置
-G.LocalVar = {
+self.G.LocalVar = {
     featMobileTabId: [],
     featAutoDownTabId: [],
     mediaControl: { tabid: 0, index: -1 }
 };
 
 // 102版本以上 非Firefox 开启更多功能
-G.isFirefox = (typeof browser == "object");
-G.version = navigator.userAgent.match(/(Chrome|Firefox)\/([\d]+)/);
-G.version = G.version && G.version[2] ? parseInt(G.version[2]) : 93;
+self.G.isFirefox = (typeof browser == "object");
+let versionMatch_init_local = navigator.userAgent.match(/(Chrome|Firefox)\/([\d]+)/); // Use local var for match
+self.G.version = versionMatch_init_local && versionMatch_init_local[2] ? parseInt(versionMatch_init_local[2]) : 93;
 
 // 脚本列表
-G.scriptList = new Map();
+self.G.scriptList = new Map();
 G.scriptList.set("search.js", { key: "search", refresh: true, allFrames: true, world: "MAIN", name: i18n.deepSearch, off: i18n.closeSearch, i18n: false, tabId: new Set() });
 G.scriptList.set("catch.js", { key: "catch", refresh: true, allFrames: true, world: "MAIN", name: i18n.cacheCapture, off: i18n.closeCapture, i18n: true, tabId: new Set() });
 G.scriptList.set("recorder.js", { key: "recorder", refresh: false, allFrames: true, world: "MAIN", name: i18n.videoRecording, off: i18n.closeRecording, i18n: true, tabId: new Set() });
@@ -195,20 +196,22 @@ G.scriptList.set("recorder2.js", { key: "recorder2", refresh: false, allFrames: 
 G.scriptList.set("webrtc.js", { key: "webrtc", refresh: true, allFrames: true, world: "MAIN", name: i18n.recordWebRTC, off: i18n.closeRecording, i18n: true, tabId: new Set() });
 
 // ffmpeg
-G.ffmpegConfig = {
+self.G.ffmpegConfig = {
     tab: 0,
     cacheData: [],
     version: 1,
     get url() {
-        return G.onlineServiceAddress == 0 ? "https://ffmpeg.bmmmd.com/" : "https://ffmpeg2.bmmmd.com/";
+        // Ensure self.G is used inside getter if G might be shadowed
+        return self.G.onlineServiceAddress == 0 ? "https://ffmpeg.bmmmd.com/" : "https://ffmpeg2.bmmmd.com/";
     }
-}
+};
 // streamSaver 边下边存
-G.streamSaverConfig = {
+self.G.streamSaverConfig = {
     get url() {
-        return G.onlineServiceAddress == 0 ? "https://stream.bmmmd.com/mitm.html" : "https://stream2.bmmmd.com/mitm.html";
+        // Ensure self.G is used inside getter if G might be shadowed
+        return self.G.onlineServiceAddress == 0 ? "https://stream.bmmmd.com/mitm.html" : "https://stream2.bmmmd.com/mitm.html";
     }
-}
+};
 
 // 正则预编译
 const reFilename = /filename="?([^"]+)"?/;
