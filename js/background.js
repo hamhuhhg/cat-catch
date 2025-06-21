@@ -394,9 +394,9 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     if (Message.Message === "getCaptureSettings") {
         if (sender.tab && sender.tab.id) {
             const settingsForClient = {
-                watchedOnNextVideo: G.watchedOnNextVideo,
-                watchedOnTabClose: G.watchedOnTabClose,
-                watchedOnCaptureComplete: G.watchedOnCaptureComplete
+                watchedOnCaptureComplete: G.watchedOnCaptureComplete, // Ensure this is sent
+                watchedOnTabClose: G.watchedOnTabClose,           // Ensure this is sent
+                watchedOnNextVideo: G.watchedOnNextVideo         // Ensure this is sent
             };
             // console.log(`Background: Sending settings to tab ${sender.tab.id}`, settingsForClient);
             chrome.tabs.sendMessage(sender.tab.id, {
