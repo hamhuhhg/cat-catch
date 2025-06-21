@@ -415,31 +415,39 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     // Handle saveCapturedVideo from catch-script/catch.js
     if (Message.Message === "saveCapturedVideo") {
         const videoData = Message.data;
-        if (videoData && videoData.objectUrl && videoData.filename) {
-            // console.log(`Background: Received saveCapturedVideo request from tab ${videoData.tabId || sender.tab.id}`, videoData);
-            fetch(videoData.objectUrl)
-                .then(response => response.blob())
-                .then(blob => {
-                    // console.log("Background: Blob fetched successfully, size:", blob.size);
-                    chrome.downloads.download({
-                        url: URL.createObjectURL(blob),
-                        filename: videoData.filename,
-                        saveAs: G.saveAs
-                    }, (downloadId) => {
-                        if (chrome.runtime.lastError) {
-                            console.error("CatCatch: Download failed:", chrome.runtime.lastError.message);
-                        } else {
-                            // console.log("CatCatch: Download started with ID:", downloadId);
-                        }
-                        URL.revokeObjectURL(videoData.objectUrl);
-                    });
-                })
-                .catch(err => {
-                    console.error("CatCatch: Error fetching blob from object URL:", err, videoData.objectUrl);
-                    URL.revokeObjectURL(videoData.objectUrl);
+        // Ensure videoData and the expected arrayBuffer and filename are present
+        if (videoData && videoData.arrayBuffer && videoData.filename) {
+            // console.log(`Background: Received saveCapturedVideo request with ArrayBuffer from tab ${videoData.tabId || (sender.tab && sender.tab.id)}. Filename: ${videoData.filename}`);
+
+            try {
+                // Create a Blob from the received ArrayBuffer and mimeType
+                const blob = new Blob([videoData.arrayBuffer], { type: videoData.mimeType });
+                // console.log(`Background: Blob created in background context. Size: ${blob.size}, Type: ${blob.type}`);
+
+                // Create an object URL for this blob (which is now in the extension's context)
+                const localObjectURL = URL.createObjectURL(blob);
+                // console.log(`Background: Created local object URL: ${localObjectURL}`);
+
+                chrome.downloads.download({
+                    url: localObjectURL,
+                    filename: videoData.filename,
+                    saveAs: G.saveAs // Use existing saveAs setting from global G object
+                }, (downloadId) => {
+                    // Important: Revoke the object URL created in this context after the download API has taken it.
+                    URL.revokeObjectURL(localObjectURL);
+                    // console.log(`Background: Revoked local object URL: ${localObjectURL}`);
+
+                    if (chrome.runtime.lastError) {
+                        console.error(`CatCatch: Download failed for ${videoData.filename}:`, chrome.runtime.lastError.message);
+                    } else {
+                        // console.log(`CatCatch: Download started for ${videoData.filename}. Download ID:`, downloadId);
+                    }
                 });
+            } catch (e) {
+                console.error(`CatCatch: Error processing ArrayBuffer or starting download for ${videoData.filename}:`, e);
+            }
         } else {
-            console.warn("CatCatch: Invalid videoData for saveCapturedVideo", videoData);
+            console.warn("CatCatch: Invalid or incomplete videoData for saveCapturedVideo. Expected arrayBuffer and filename. Received:", videoData);
         }
         return true;
     }

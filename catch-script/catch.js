@@ -99,12 +99,12 @@
                 // console.log("CatCatch: Save aborted - already sent or no data for current source.");
                 return;
             }
-            // console.log(`CatCatch: Preparing to send video. Trigger: ${triggerType}`);
-            this.hasSentVideoForSave = true; // Set flag immediately for the current capture session
+            // console.log(`CatCatch: Preparing to send video as ArrayBuffer. Trigger: ${triggerType}`);
+            this.hasSentVideoForSave = true; // Set flag immediately
 
-            this.getFileName(); // Ensure filename is up-to-date
+            this.getFileName();
             const filename = this.fileName ? this.fileName.innerHTML.trim() : (document.title || "captured_video");
-            const primaryStream = this.catchMedia[0]; // Assuming the first stream is the main one
+            const primaryStream = this.catchMedia[0];
             const mimeType = (primaryStream.mimeType && primaryStream.mimeType.split(';')[0]) || 'video/mp4';
 
             const allBuffers = [];
