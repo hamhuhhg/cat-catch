@@ -37,110 +37,165 @@
                 }
             }
 
-            // 初始化组件
-            // 删除iframe sandbox属性 避免 issues #576
             this.setupIframeProcessing();
-
-            // 初始化 Trusted Types
             this.initTrustedTypes();
-
-            // 创建和设置UI
             this.createUI();
 
-            this.getSettingsAndTabId().catch(err => console.warn("CatCatch: Failed to get initial settings/tabId:", err));
-
-            // 代理MediaSource方法
-            this.proxyMediaSourceMethods();
-
-            this.setupPeriodicStorageSave(); // For watchedOnTabClose
-            this.boundMessageHandler = this.handleBackgroundMessage.bind(this); // Bind `this`
+            this.boundMessageHandler = this.handleBackgroundMessage.bind(this);
             window.addEventListener("message", this.boundMessageHandler);
+
+            this.getSettingsAndTabId().catch(err => console.warn("CatCatch: Failed to get initial settings/tabId:", err));
+            this.setupPeriodicStorageSave();
+            this.proxyMediaSourceMethods();
         }
 
         getSettingsAndTabId() {
-            // Ask background.js for settings and its tabId
-            // Use a promise to ensure settings are available before certain operations
             return new Promise((resolve, reject) => {
-                window.postMessage({ action: "catCatchToBackground", Message: "getCaptureSettings" }, "*");
+                window.postMessage({
+                    action: "catCatchToBackground",
+                    Message: "getCaptureSettings"
+                }, "*");
 
                 const messageListener = (event) => {
-                    if (event.source === window && event.data && event.data.action === "catCatchSettingsResponse") {
+                    if (event.source === window && event.data && event.data.catCatchInternalMessage && event.data.action === "receiveSettingsAndTabId") {
                         if (event.data.settings) {
                             this.settings = { ...this.settings, ...event.data.settings };
-                            // console.log("CatCatch: Received settings", this.settings);
                         }
                         if (event.data.tabId) {
                             this.tabId = event.data.tabId;
-                            // console.log("CatCatch: Received tabId", this.tabId);
                         }
                         window.removeEventListener("message", messageListener);
                         resolve();
                     }
                 };
                 window.addEventListener("message", messageListener);
-                setTimeout(() => { // Timeout for safety
+
+                setTimeout(() => {
                     window.removeEventListener("message", messageListener);
-                    reject(new Error("Timeout getting settings from background"));
+                    if (!this.tabId) {
+                        reject(new Error("Timeout getting settings/tabId from background"));
+                    } else {
+                        resolve();
+                    }
                 }, 5000);
             });
         }
 
         _fullClearCapturedMedia() {
-            // console.log("CatCatch: Full clear of captured media.");
             this.catchMedia = [];
             this.mediaSize = 0;
             this.isComplete = false;
-            // this.currentMediaSourceIdentifier = null; // This is reset when a new source is identified.
-            // this.hasSentVideoForSave = false; // This is reset when a new source is identified.
         }
 
         prepareAndSendVideoForSave(triggerType) {
             if (this.hasSentVideoForSave || this.catchMedia.length === 0 || !this.catchMedia[0]?.bufferList?.length) {
-                // console.log("CatCatch: Save aborted - already sent or no data for current source.");
                 return;
             }
-            // console.log(`CatCatch: Preparing to send video as Base64 Data URL. Trigger: ${triggerType}`);
-            this.hasSentVideoForSave = true; // Set flag immediately
-
+            this.hasSentVideoForSave = true;
             this.getFileName();
             const filename = this.fileName ? this.fileName.innerHTML.trim() : (document.title || "captured_video");
             const primaryStream = this.catchMedia[0];
             const mimeType = (primaryStream.mimeType && primaryStream.mimeType.split(';')[0]) || 'video/mp4';
-
             const allBuffers = [];
             for (const buffer of primaryStream.bufferList) {
                 allBuffers.push(buffer);
             }
-
             if (allBuffers.length === 0) {
-                // console.log("CatCatch: No buffers to save.");
-                // If we set hasSentVideoForSave = true but send nothing, we might block future saves.
-                // This should ideally not happen if the initial check (bufferList.length) is done.
-                // For safety, reset if nothing is actually sent.
                 this.hasSentVideoForSave = false;
                 return;
             }
-
             const videoBlob = new Blob(allBuffers, { type: mimeType });
-            const objectUrl = URL.createObjectURL(videoBlob);
+            const fileReader = new FileReader();
+            fileReader.onload = (event) => {
+                const dataUrl = event.target.result;
+                window.postMessage({
+                    action: "catCatchToBackground",
+                    Message: "saveCapturedVideo",
+                    data: {
+                        dataUrl: dataUrl,
+                        filename: `${filename}.${mimeType.split('/')[1] || 'mp4'}`,
+                        mimeType: mimeType,
+                        tabId: this.tabId,
+                        trigger: triggerType
+                    }
+                }, "*");
+                this._fullClearCapturedMedia();
+            };
+            fileReader.onerror = (error) => {
+                console.error("CatCatch: Error reading blob as Data URL:", error);
+                this.hasSentVideoForSave = false;
+            };
+            fileReader.readAsDataURL(videoBlob);
+        }
 
-            // console.log(`CatCatch: Sending video to background. Filename: ${filename}, Type: ${mimeType}, Size: ${videoBlob.size}, ObjectURL: ${objectUrl}`);
-
-            // Message structure for content-script to relay to background.js
-            window.postMessage({
-                action: "catCatchToBackground",     // For content-script's existing listener
-                Message: "saveCapturedVideo",        // Specific message type for background.js
-                data: {
-                    objectUrl: objectUrl,
-                    filename: `${filename}.${mimeType.split('/')[1] || 'mp4'}`,
-                    mimeType: mimeType,
-                    tabId: this.tabId,               // Send tabId for context
-                    trigger: triggerType
+        setupPeriodicStorageSave() {
+            if (this.storageSaveInterval) {
+                clearInterval(this.storageSaveInterval);
+            }
+            this.storageSaveInterval = setInterval(() => {
+                if (this.enable &&
+                    this.tabId &&
+                    this.settings.watchedOnTabClose &&
+                    this.catchMedia.length > 0 &&
+                    this.catchMedia[0]?.bufferList?.length > 0 &&
+                    !this.hasSentVideoForSave) {
+                    try {
+                        this.getFileName();
+                        const captureState = {
+                            filename: this.fileName ? this.fileName.innerHTML.trim() : (document.title || "capture_in_progress"),
+                            mimeType: (this.catchMedia[0]?.mimeType?.split(';')[0]) || 'video/mp4',
+                            bufferCount: this.catchMedia[0].bufferList.length,
+                            totalSize: this.mediaSize,
+                            timestamp: Date.now(),
+                            isCapturing: true
+                        };
+                        window.postMessage({
+                            action: "catCatchToBackground",
+                            Message: "updateTabCaptureState",
+                            tabId: this.tabId,
+                            captureState: captureState
+                        }, "*");
+                    } catch (e) {
+                        console.error("CatCatch: Error during periodic capture state update:", e);
+                    }
                 }
-            }, "*");
+            }, 15000);
+        }
 
-            this._fullClearCapturedMedia(); // Clear media after sending it for save
-            // Note: URL.revokeObjectURL(objectUrl) should be done by background.js after it fetches and processes the blob.
+        handleBackgroundMessage(event) {
+            if (event.source === window && event.data && event.data.catCatchInternalMessage) {
+                const { action, command, filenameHint, settings, tabId } = event.data;
+
+                if (command === "triggerDownloadFromCache") {
+                    if (this.catchMedia && this.catchMedia.length > 0 && this.catchMedia[0]?.bufferList?.length > 0) {
+                        this.catchDownload();
+                    }
+                } else if (command === "shutdown") {
+                     this.handleShutdown();
+                } else if (action === "receiveSettingsAndTabId") {
+                    if (settings) {
+                        this.settings = { ...this.settings, ...settings };
+                    }
+                    if (tabId) {
+                        this.tabId = tabId;
+                    }
+                }
+            }
+        }
+
+        handleShutdown() {
+            this.enable = false;
+            if (this.catCatch) {
+                this.catCatch.style.display = 'none';
+            }
+            if (this.storageSaveInterval) { // Ensure interval exists before clearing
+                clearInterval(this.storageSaveInterval);
+                this.storageSaveInterval = null;
+            }
+            if (this.boundMessageHandler) { // Ensure handler exists before removing
+                window.removeEventListener("message", this.boundMessageHandler);
+                this.boundMessageHandler = null;
+            }
         }
 
         /**

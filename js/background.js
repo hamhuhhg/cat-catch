@@ -415,29 +415,29 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     // Handle saveCapturedVideo from catch-script/catch.js
     if (Message.Message === "saveCapturedVideo") {
         const videoData = Message.data;
-        // Ensure videoData and the expected dataUrl and filename are present
-        if (videoData && videoData.dataUrl && videoData.filename) {
-            // console.log(`Background: Received saveCapturedVideo request with Data URL from tab ${videoData.tabId || (sender.tab && sender.tab.id)}. Filename: ${videoData.filename}`);
+        // videoData contains { objectUrl or dataUrl, filename, mimeType, tabId, trigger }
+        // The message itself is the signal.
 
-            try {
-                // Directly use the dataUrl for download
-                chrome.downloads.download({
-                    url: videoData.dataUrl, // Pass the Data URL directly
-                    filename: videoData.filename,
-                    saveAs: G.saveAs // Use existing saveAs setting from global G object
-                }, (downloadId) => {
-                    if (chrome.runtime.lastError) {
-                        console.error(`CatCatch: Download failed for ${videoData.filename}:`, chrome.runtime.lastError.message);
-                    } else {
-                        // console.log(`CatCatch: Download started for ${videoData.filename}. Download ID:`, downloadId);
-                    }
-                    // No object URL was created in this context from the dataUrl, so no revocation needed here.
-                });
-            } catch (e) {
-                console.error(`CatCatch: Error starting download for ${videoData.filename} using Data URL:`, e);
-            }
+        if (videoData && videoData.tabId && videoData.filename) {
+            // console.log(`Background: 'saveCapturedVideo' event received from tab ${videoData.tabId}. Trigger: ${videoData.trigger}. Commanding self-download.`);
+
+            // Command catch-script.js on that specific tab to trigger its own download.
+            chrome.tabs.sendMessage(videoData.tabId, {
+                catCatchMessageRelay: true,    // For content-script to relay
+                for: "catchScript",            // Target identifier for content-script
+                payload: {
+                    command: "triggerDownloadFromCache", // Command for catch-script.js
+                    filenameHint: videoData.filename    // Pass filename hint if needed by catchDownload
+                }
+            }, response => {
+                if (chrome.runtime.lastError) {
+                    // console.warn(`CatCatch: Error sending 'triggerDownloadFromCache' to tab ${videoData.tabId} from saveCapturedVideo handler: ${chrome.runtime.lastError.message}`);
+                } else {
+                    // console.log(`CatCatch: 'triggerDownloadFromCache' command sent to tab ${videoData.tabId}. Response:`, response);
+                }
+            });
         } else {
-            console.warn("CatCatch: Invalid or incomplete videoData for saveCapturedVideo. Expected dataUrl and filename. Received:", videoData);
+            console.warn("CatCatch: Invalid or incomplete videoData for 'saveCapturedVideo' message. Expected tabId and filename. Received:", videoData);
         }
         return true;
     }
@@ -892,22 +892,24 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
     if (G.autoCaptureEnabled && G.watchedOnTabClose && G.scriptList.get("catch.js")?.tabId.has(tabId)) {
         const captureState = tabCaptureStates.get(tabId);
         if (captureState && captureState.isCapturing) {
-            // console.log(`Background: Tab ${tabId} closed, was capturing. Attempting to trigger save. State:`, captureState);
+            // console.log(`Background: Tab ${tabId} closed, was capturing (state found). Commanding self-download.`);
             chrome.tabs.sendMessage(tabId, {
                 catCatchMessageRelay: true,
                 for: "catchScript",
                 payload: {
-                    action: "doSaveOnTabClose", // New action for catch.js
+                    command: "triggerDownloadFromCache",
                     filenameHint: captureState.filename
                 }
             }, response => {
                 if (chrome.runtime.lastError) {
-                    // console.warn(`CatCatch: Error sending doSaveOnTabClose to tab ${tabId}: ${chrome.runtime.lastError.message}. Might be too late.`);
+                    // console.warn(`CatCatch: Error sending 'triggerDownloadFromCache' to closing tab ${tabId}: ${chrome.runtime.lastError.message}. Might be too late.`);
                 } else {
-                    // console.log(`CatCatch: doSaveOnTabClose message sent to tab ${tabId}. Response:`, response);
+                    // console.log(`CatCatch: 'triggerDownloadFromCache' message sent to closing tab ${tabId}. Response:`, response);
                 }
             });
-        }
+        } else {
+            // console.log(`Background: Tab ${tabId} closed, auto-capture ON, but no active capture state found in tabCaptureStates or not marked as isCapturing.`);
+       }
     }
     tabCaptureStates.delete(tabId); // Clean up state for the closed tab
 
