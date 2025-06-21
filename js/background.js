@@ -415,39 +415,29 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     // Handle saveCapturedVideo from catch-script/catch.js
     if (Message.Message === "saveCapturedVideo") {
         const videoData = Message.data;
-        // Ensure videoData and the expected arrayBuffer and filename are present
-        if (videoData && videoData.arrayBuffer && videoData.filename) {
-            // console.log(`Background: Received saveCapturedVideo request with ArrayBuffer from tab ${videoData.tabId || (sender.tab && sender.tab.id)}. Filename: ${videoData.filename}`);
+        // Ensure videoData and the expected dataUrl and filename are present
+        if (videoData && videoData.dataUrl && videoData.filename) {
+            // console.log(`Background: Received saveCapturedVideo request with Data URL from tab ${videoData.tabId || (sender.tab && sender.tab.id)}. Filename: ${videoData.filename}`);
 
             try {
-                // Create a Blob from the received ArrayBuffer and mimeType
-                const blob = new Blob([videoData.arrayBuffer], { type: videoData.mimeType });
-                // console.log(`Background: Blob created in background context. Size: ${blob.size}, Type: ${blob.type}`);
-
-                // Create an object URL for this blob (which is now in the extension's context)
-                const localObjectURL = URL.createObjectURL(blob);
-                // console.log(`Background: Created local object URL: ${localObjectURL}`);
-
+                // Directly use the dataUrl for download
                 chrome.downloads.download({
-                    url: localObjectURL,
+                    url: videoData.dataUrl, // Pass the Data URL directly
                     filename: videoData.filename,
                     saveAs: G.saveAs // Use existing saveAs setting from global G object
                 }, (downloadId) => {
-                    // Important: Revoke the object URL created in this context after the download API has taken it.
-                    URL.revokeObjectURL(localObjectURL);
-                    // console.log(`Background: Revoked local object URL: ${localObjectURL}`);
-
                     if (chrome.runtime.lastError) {
                         console.error(`CatCatch: Download failed for ${videoData.filename}:`, chrome.runtime.lastError.message);
                     } else {
                         // console.log(`CatCatch: Download started for ${videoData.filename}. Download ID:`, downloadId);
                     }
+                    // No object URL was created in this context from the dataUrl, so no revocation needed here.
                 });
             } catch (e) {
-                console.error(`CatCatch: Error processing ArrayBuffer or starting download for ${videoData.filename}:`, e);
+                console.error(`CatCatch: Error starting download for ${videoData.filename} using Data URL:`, e);
             }
         } else {
-            console.warn("CatCatch: Invalid or incomplete videoData for saveCapturedVideo. Expected arrayBuffer and filename. Received:", videoData);
+            console.warn("CatCatch: Invalid or incomplete videoData for saveCapturedVideo. Expected dataUrl and filename. Received:", videoData);
         }
         return true;
     }

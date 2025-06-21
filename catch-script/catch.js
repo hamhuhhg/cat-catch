@@ -99,7 +99,7 @@
                 // console.log("CatCatch: Save aborted - already sent or no data for current source.");
                 return;
             }
-            // console.log(`CatCatch: Preparing to send video as ArrayBuffer. Trigger: ${triggerType}`);
+            // console.log(`CatCatch: Preparing to send video as Base64 Data URL. Trigger: ${triggerType}`);
             this.hasSentVideoForSave = true; // Set flag immediately
 
             this.getFileName();
