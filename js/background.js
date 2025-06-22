@@ -697,39 +697,39 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         sendResponse("ok");
         return true;
     }
-    // Handle autoCaptureEnabled change
-    if (changes.autoCaptureEnabled !== undefined) {
-        G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
-        // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
-        const catchScript = G.scriptList.get("catch.js");
-        if (!catchScript) {
-            console.error("CatCatch: catch.js script info not found for storage change handling.");
-            return true; // Return true for async handling
-        }
+    // // Handle autoCaptureEnabled change -- THIS BLOCK IS MOVED TO chrome.storage.onChanged (see around line 893)
+    // if (changes.autoCaptureEnabled !== undefined) {
+    //     G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
+    //     // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
+    //     const catchScript = G.scriptList.get("catch.js");
+    //     if (!catchScript) {
+    //         console.error("CatCatch: catch.js script info not found for storage change handling.");
+    //         return true; // Return true for async handling
+    //     }
 
-        if (G.autoCaptureEnabled) {
-            // Auto capture just turned ON. Iterate all tabs and apply logic.
-            chrome.tabs.query({}, function(tabs) {
-                if (chrome.runtime.lastError) {
-                    console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
-                    return;
-                }
-                for (const tab of tabs) {
-                    if (tab.id && tab.url) { // Ensure tab.url is present
-                        manageAutoCaptureForTab(tab.id, tab.url);
-                    }
-                }
-            });
-        } else {
-            // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
-            const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
-            activeTabsCopy.forEach(tabIdToDisable => {
-                // No need to check other conditions like blocklist here. If auto is off, it's off.
-                catchScript.tabId.delete(tabIdToDisable);
-                removeCatchScript(tabIdToDisable, catchScript);
-            });
-        }
-    }
+    //     if (G.autoCaptureEnabled) {
+    //         // Auto capture just turned ON. Iterate all tabs and apply logic.
+    //         chrome.tabs.query({}, function(tabs) {
+    //             if (chrome.runtime.lastError) {
+    //                 console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
+    //                 return;
+    //             }
+    //             for (const tab of tabs) {
+    //                 if (tab.id && tab.url) { // Ensure tab.url is present
+    //                     manageAutoCaptureForTab(tab.id, tab.url);
+    //                 }
+    //             }
+    //         });
+    //     } else {
+    //         // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+    //         const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+    //         activeTabsCopy.forEach(tabIdToDisable => {
+    //             // No need to check other conditions like blocklist here. If auto is off, it's off.
+    //             catchScript.tabId.delete(tabIdToDisable);
+    //             removeCatchScript(tabIdToDisable, catchScript);
+    //         });
+    //     }
+    // }
     // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
         console.log("[CatCatch] BG: Received 'catCatchFFmpeg' message.", JSON.parse(JSON.stringify(Message)));
@@ -748,11 +748,11 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         if (Message.action === "catchMerge" || (Message.action === "transcode" && Message.files && Message.files.some(f => f.data && typeof f.data === 'string' && f.data.startsWith("blob:")))) {
             sourceType = 'capture';
             // For captures, Message.files is already an array like [{data: "blob:...", type: "..."}, ...]
-            // We can enhance this by ensuring a 'name' property if the helper page expects it.
+            // The working version implied the helper page expects the blob URL in the 'data' property.
             filesPayload = Message.files.map((file, index) => ({
-                url: file.data, // The blob URL string
+                data: file.data, // Use 'data' to hold the blob URL string
                 type: file.type || 'application/octet-stream',
-                name: file.name || `${Message.title || 'capture'}_part${index + 1}`
+                name: file.name || `${Message.title || 'capture'}_part${index + 1}` // Keep 'name' for clarity
             }));
             if (filesPayload.length === 0) {
                 console.error("[CatCatch] BG: No valid blob URLs found in files from capture script for FFmpeg. Original Message.files:", JSON.parse(JSON.stringify(Message.files)));

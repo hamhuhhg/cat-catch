@@ -812,9 +812,11 @@
                 const mime = (item.mimeType && item.mimeType.split(';')[0]) || 'video/mp4';
                 const fileBlob = new Blob(item.bufferList, { type: mime });
                 const type = mime.split('/')[0] || 'video';
+                const blobUrl = URL.createObjectURL(fileBlob);
+                console.log("[CatCatch] catch.js: Created blob URL:", blobUrl, "for blob size:", fileBlob.size, "type:", fileBlob.type);
 
                 media.push({
-                    data: (typeof chrome == "object") ? URL.createObjectURL(fileBlob) : fileBlob,
+                    data: blobUrl, // Ensure the string URL is pushed
                     type: type
                 });
             }
