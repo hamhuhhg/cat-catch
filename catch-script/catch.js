@@ -825,15 +825,16 @@
             }
 
             const title = this.fileName ? this.fileName.innerHTML.trim() : document.title;
-
-            window.postMessage({
+            const messagePayload = {
                 action: "catCatchFFmpeg",
                 use: "catchMerge",
                 files: media,
                 title: title,
                 output: title,
                 quantity: media.length
-            });
+            };
+            console.log("[CatCatch] catch.js: Sending 'catCatchFFmpeg' (catchMerge) message to content script. Payload:", JSON.parse(JSON.stringify(messagePayload)));
+            window.postMessage(messagePayload);
         }
         /**
          * 直接下载捕获的数据

@@ -741,8 +741,63 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
             return true;
         }
 
-        const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
-        console.log("[CatCatch] BG: Prepared data for FFmpeg helper page:", JSON.parse(JSON.stringify(data)));
+        let sourceType = 'm3u8'; // Default to m3u8
+        let filesPayload = Message.files; // Default to passing original files
+
+        // Determine sourceType and potentially re-structure 'files' for captures
+        if (Message.action === "catchMerge" || (Message.action === "transcode" && Message.files && Message.files.some(f => f.data && typeof f.data === 'string' && f.data.startsWith("blob:")))) {
+            sourceType = 'capture';
+            // For captures, Message.files is already an array like [{data: "blob:...", type: "..."}, ...]
+            // We can enhance this by ensuring a 'name' property if the helper page expects it.
+            filesPayload = Message.files.map((file, index) => ({
+                url: file.data, // The blob URL string
+                type: file.type || 'application/octet-stream',
+                name: file.name || `${Message.title || 'capture'}_part${index + 1}`
+            }));
+            if (filesPayload.length === 0) {
+                console.error("[CatCatch] BG: No valid blob URLs found in files from capture script for FFmpeg. Original Message.files:", JSON.parse(JSON.stringify(Message.files)));
+                sendResponse("error_no_valid_capture_files_for_ffmpeg");
+                return true;
+            }
+        } else if (Message.files && Message.files.length > 0 && Message.files[0].name && Message.files[0].name.startsWith("memory")) {
+            // This is likely from m3u8.js, sending M3U8 stream content (not an M3U8 URL)
+            // The payload structure for m3u8 content might be specific.
+            // For m3u8.js, Message.files is like: [{ data: URL.createObjectURL(fileBlob), name: "memory..." }]
+            // The FFmpeg page needs to know that 'data' here is a URL to the M3U8 stream content.
+            // Let's ensure it's also structured with a 'url' field for consistency if possible,
+            // or rely on the FFmpeg page to handle this specific 'memory' name convention.
+            // For now, we'll pass it as is, assuming helper page understands it, but mark sourceType.
+            sourceType = 'm3u8_content';
+            filesPayload = Message.files; // Pass as is.
+        } else if (Message.url && Message.url.toLowerCase().includes('.m3u8')) {
+            // If the original message had a primary URL that is an M3U8.
+            sourceType = 'm3u8_url';
+            // If Message.files is not already populated from m3u8.js, construct it.
+            // This case might not be hit if m3u8.js always populates Message.files.
+            if (!Message.files || Message.files.length === 0) {
+                 filesPayload = [{
+                    url: Message.url, // The M3U8 URL
+                    type: 'application/vnd.apple.mpegurl',
+                    name: Message.title || `stream_${Date.now()}.m3u8`
+                }];
+            }
+        }
+
+
+        const dataToHelper = {
+            Message: "ffmpeg", // Standard command for the helper page
+            action: Message.action,
+            files: filesPayload, // Standardized 'files' structure for captures, or original for M3U8s
+            sourceType: sourceType, // 'capture', 'm3u8_content', 'm3u8_url'
+            title: Message.title || `media_${Date.now()}`,
+            output: Message.output || Message.title || `output_${Date.now()}`, // FFmpeg helper page might use this for output filename
+            quantity: Message.quantity || (Array.isArray(filesPayload) ? filesPayload.length : 1),
+            tabId: Message.tabId ?? sender.tab.id,
+            version: G.ffmpegConfig.version
+            // Removed originalMessage to keep payload cleaner unless specifically needed by helper.
+        };
+
+        console.log("[CatCatch] BG: Prepared data for FFmpeg helper page:", JSON.parse(JSON.stringify(dataToHelper)));
 
         chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, function (tabs) {
             if (chrome.runtime.lastError) {
@@ -753,7 +808,7 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
 
             if (!tabs.length) {
                 console.log("[CatCatch] BG: No existing FFmpeg tab found. Creating new tab for:", G.ffmpegConfig.url);
-                chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, function (tab) {
+                chrome.tabs.create({ url: G.ffmpegConfig.url, active: dataToHelper.active ?? true }, function (tab) {
                     if (chrome.runtime.lastError) {
                         console.error("[CatCatch] BG: Error creating FFmpeg tab:", chrome.runtime.lastError.message);
                         sendResponse("error_create_ffmpeg_tab");
@@ -762,7 +817,7 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
                     if (tab) { // Ensure tab is created
                         console.log("[CatCatch] BG: FFmpeg tab created. ID:", tab.id, "Status:", tab.status);
                         G.ffmpegConfig.tab = tab.id;
-                        G.ffmpegConfig.cacheData.push(data);
+                        G.ffmpegConfig.cacheData.push(dataToHelper); // Cache the modified dataToHelper
                         console.log("[CatCatch] BG: Data cached for FFmpeg tab. Cache size:", G.ffmpegConfig.cacheData.length);
                     } else {
                         console.error("[CatCatch] BG: Failed to create FFmpeg tab, tab object is null.");
@@ -773,9 +828,9 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
                 console.log("[CatCatch] BG: Existing FFmpeg tab found. ID:", tabs[0].id, "Status:", tabs[0].status);
                 if (tabs[0].status == "complete") {
                     console.log("[CatCatch] BG: FFmpeg tab is complete. Sending message to tabId:", tabs[0].id);
-                    chrome.tabs.sendMessage(tabs[0].id, data, function(response) {
+                    chrome.tabs.sendMessage(tabs[0].id, dataToHelper, function(response) { // Send dataToHelper
                         if (chrome.runtime.lastError) {
-                            console.error("[CatCatch] BG: Error sending message to existing FFmpeg tab:", chrome.runtime.lastError.message, "Data:", JSON.parse(JSON.stringify(data)));
+                            console.error("[CatCatch] BG: Error sending message to existing FFmpeg tab:", chrome.runtime.lastError.message, "Data:", JSON.parse(JSON.stringify(dataToHelper)));
                         } else {
                             console.log("[CatCatch] BG: Response from FFmpeg tab:", response);
                         }
@@ -783,12 +838,12 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
                 } else {
                     console.log("[CatCatch] BG: FFmpeg tab not complete. Caching data. Tab ID:", tabs[0].id);
                     G.ffmpegConfig.tab = tabs[0].id;
-                    G.ffmpegConfig.cacheData.push(data);
+                    G.ffmpegConfig.cacheData.push(dataToHelper); // Cache the modified dataToHelper
                     console.log("[CatCatch] BG: Data cached for FFmpeg tab. Cache size:", G.ffmpegConfig.cacheData.length);
                 }
             }
         });
-        sendResponse("ok_bg_processed"); // Send response back to m3u8.js
+        sendResponse("ok_bg_processed");
         return true;
     }
     // 发送数据到本地
