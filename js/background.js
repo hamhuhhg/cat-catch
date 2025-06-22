@@ -407,7 +407,13 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
                     settings: settingsForClient,
                     tabId: sender.tab.id
                 }
+            }, function(response) {
+                // Optional: handle response from content script if needed
+                // console.log("Response from content script after sending settings:", response);
             });
+            sendResponse({status: "settings_sent_to_tab"});
+        } else {
+            sendResponse({status: "error", message: "No sender tab ID for getCaptureSettings"});
         }
         return true;
     }
@@ -432,12 +438,15 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
             }, response => {
                 if (chrome.runtime.lastError) {
                     // console.warn(`CatCatch: Error sending 'triggerDownloadFromCache' to tab ${videoData.tabId} from saveCapturedVideo handler: ${chrome.runtime.lastError.message}`);
+                    // No sendResponse here as the main path already sent it.
                 } else {
                     // console.log(`CatCatch: 'triggerDownloadFromCache' command sent to tab ${videoData.tabId}. Response:`, response);
                 }
             });
+            sendResponse({status: "trigger_download_sent_to_tab"});
         } else {
             console.warn("CatCatch: Invalid or incomplete videoData for 'saveCapturedVideo' message. Expected tabId and filename. Received:", videoData);
+            sendResponse({status: "error", message: "Invalid videoData for saveCapturedVideo"});
         }
         return true;
     }
@@ -787,6 +796,90 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         try { send2local(Message.action, Message.data, Message.tabId); } catch (e) { console.log(e); }
         sendResponse("ok");
         return true;
+    }
+    // The following block was mistakenly placed here and caused 'changes is not defined' error.
+    // It's being moved to a new chrome.storage.onChanged listener.
+    // // Handle autoCaptureEnabled change
+    // if (changes.autoCaptureEnabled !== undefined) {
+    //     G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
+    //     // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
+    //     const catchScript = G.scriptList.get("catch.js");
+    //     if (!catchScript) {
+    //         console.error("CatCatch: catch.js script info not found for storage change handling.");
+    //         return true; // Return true for async handling
+    //     }
+
+    //     if (G.autoCaptureEnabled) {
+    //         // Auto capture just turned ON. Iterate all tabs and apply logic.
+    //         chrome.tabs.query({}, function(tabs) {
+    //             if (chrome.runtime.lastError) {
+    //                 console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
+    //                 return;
+    //             }
+    //             for (const tab of tabs) {
+    //                 if (tab.id && tab.url) { // Ensure tab.url is present
+    //                     manageAutoCaptureForTab(tab.id, tab.url);
+    //                 }
+    //             }
+    //         });
+    //     } else {
+    //         // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+    //         const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+    //         activeTabsCopy.forEach(tabIdToDisable => {
+    //             // No need to check other conditions like blocklist here. If auto is off, it's off.
+    //             catchScript.tabId.delete(tabIdToDisable);
+    //             removeCatchScript(tabIdToDisable, catchScript);
+    //         });
+    //     }
+    // }
+});
+
+// Listener for storage changes
+chrome.storage.onChanged.addListener(function(changes, namespace) {
+    if (chrome.runtime.lastError) {
+        console.error("CatCatch: Error in storage.onChanged listener:", chrome.runtime.lastError.message);
+        return;
+    }
+
+    for (let [key, { oldValue, newValue }] of Object.entries(changes)) {
+        // console.log(
+        //     `Storage key "${key}" in namespace "${namespace}" changed.`,
+        //     `Old value was "${JSON.stringify(oldValue)}", new value is "${JSON.stringify(newValue)}".`
+        // );
+
+        if (key === "autoCaptureEnabled") {
+            console.log("[CatCatch] BG: autoCaptureEnabled changed in storage to", newValue);
+            G.autoCaptureEnabled = newValue; // Update global G
+            const catchScript = G.scriptList.get("catch.js");
+            if (!catchScript) {
+                console.error("CatCatch: catch.js script info not found for storage change handling (autoCaptureEnabled).");
+                return;
+            }
+
+            if (G.autoCaptureEnabled) {
+                // Auto capture just turned ON. Iterate all tabs and apply logic.
+                chrome.tabs.query({}, function(tabs) {
+                    if (chrome.runtime.lastError) {
+                        console.error("CatCatch: Error querying tabs for autoCaptureEnabled ON:", chrome.runtime.lastError.message);
+                        return;
+                    }
+                    for (const tab of tabs) {
+                        if (tab.id && tab.url) { // Ensure tab.url is present
+                            manageAutoCaptureForTab(tab.id, tab.url);
+                        }
+                    }
+                });
+            } else {
+                // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+                const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+                activeTabsCopy.forEach(tabIdToDisable => {
+                    catchScript.tabId.delete(tabIdToDisable);
+                    removeCatchScript(tabIdToDisable, catchScript);
+                });
+                console.log("[CatCatch] BG: autoCaptureEnabled turned OFF. Removed catch.js from tabs:", Array.from(activeTabsCopy));
+            }
+        }
+        // Add other storage change handlers here if needed
     }
 });
 
