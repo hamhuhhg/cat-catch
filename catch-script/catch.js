@@ -212,6 +212,15 @@
                 font-family: "Microsoft YaHei", "Helvetica", "Arial", sans-serif;
                 user-select: none;`;
 
+            // *** START NEW CODE ***
+            // Set initial minimized state AFTER base styles are applied
+            const controlsPanel = this.catCatch.querySelector('#catCatch');
+            if (controlsPanel) {
+                controlsPanel.style.display = 'none';
+            }
+            this.catCatch.style.opacity = '0.5';
+            // *** END NEW CODE ***
+
             // 创建 Shadow DOM
             this.createShadowRoot();
 
