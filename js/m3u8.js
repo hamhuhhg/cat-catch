@@ -1502,6 +1502,8 @@ function mergeTsNew(down) {
     }
     // 发送到ffmpeg
     if ($("#ffmpeg").prop("checked") || _ffmpeg || isSendFfmpeg) {
+        console.log("[CatCatch] M3U8.JS: FFmpeg option is checked or _ffmpeg/isSendFfmpeg is true.");
+        console.log("[CatCatch] M3U8.JS: fileBlob size:", fileBlob.size);
         /**
          * 大于1.8G 不使用ffmpeg直接下载
          * chrome每个进程限制2G内存 处理2G视频可能导致超过限制。1.8G是安全值。
@@ -1544,7 +1546,9 @@ function mergeTsNew(down) {
         if (_taskId) {
             data.taskId = _taskId;
         }
+        console.log("[CatCatch] M3U8.JS: Sending data to background for FFmpeg:", JSON.parse(JSON.stringify(data))); // Use JSON.parse(JSON.stringify()) for deep copy of blob for logging
         chrome.runtime.sendMessage(data, function (response) {
+            console.log("[CatCatch] M3U8.JS: Response from background for FFmpeg sendMessage:", response, chrome.runtime.lastError ? chrome.runtime.lastError.message : "");
             if (!chrome.runtime?.lastError && response && response == "ok") {
                 $progress.html(i18n.sendFfmpeg);
                 buttonState("#mergeTs", true);
@@ -1569,6 +1573,38 @@ function apiDownload(fileBlob, fileName, ext) {
             downId = downloadId;
             $(".openDir").show();
             buttonState("#mergeTs", true);
+
+            // Check if this is a multi-part download without FFmpeg
+            // _ffmpeg (URL param) indicates an operation type, _quantity (URL param) indicates total parts
+            const isMultiPartOp = (_ffmpeg === "merge" || (_quantity && parseInt(_quantity) > 1));
+            const ffmpegOptionChecked = $("#ffmpeg").prop("checked");
+
+            if (isMultiPartOp && !ffmpegOptionChecked) {
+                // This is likely one part (e.g., video or audio) of a multi-stream download
+                // where FFmpeg was not selected for merging.
+                let currentPartType = "media"; // Generic term
+                // Heuristic: try to guess if it's audio or video based on common M3U8 patterns or info
+                // This is a rough guess; a more robust way would be if `m3u8.js` knew its role (audio/video processor)
+                // from the page that opened it (e.g., popup.js during "onlineMerge").
+                if (fileName.toLowerCase().includes("audio") || $("#onlyAudio").prop("checked")) {
+                    currentPartType = "audio";
+                } else if (fileName.toLowerCase().includes("video")) {
+                    currentPartType = "video";
+                }
+
+                const userMessage = i18n("separateMediaDownloaded", [currentPartType, "ffmpeg -i video_file.mp4 -i audio_file.m4a -c copy output_merged.mp4"]);
+
+                // Display the message. Appending to $progress or using a more prominent alert/modal.
+                // For now, let's append to progress and also alert for visibility.
+                if ($progress.html().includes(i18n.SavePrompt) || $progress.html() === "") {
+                     $progress.html(i18n.SavePrompt + "<br/><b>" + userMessage + "</b>");
+                } else {
+                     $progress.append("<br/><b>" + userMessage + "</b>");
+                }
+                // alert(userMessage); // Alert can be annoying if there are multiple parts.
+                console.log("[CatCatch] M3U8.JS: Separate media part downloaded without FFmpeg. User informed.");
+            }
+
         } else if (chrome.runtime?.lastError?.message && chrome.runtime.lastError.message == 'Invalid filename') {
             apiDownload(fileBlob, stringModify(fileName), ext);
             return;

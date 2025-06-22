@@ -723,24 +723,63 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     }
     // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
+        console.log("[CatCatch] BG: Received 'catCatchFFmpeg' message.", JSON.parse(JSON.stringify(Message)));
+        console.log("[CatCatch] BG: Current G.ffmpegConfig:", JSON.parse(JSON.stringify(G.ffmpegConfig)));
+
+        if (!G.ffmpegConfig.url || G.ffmpegConfig.url.trim() === "") {
+            console.error("[CatCatch] BG: FFmpeg helper URL (G.ffmpegConfig.url) is not configured. Aborting FFmpeg operation.");
+            sendResponse("error_ffmpeg_url_not_configured");
+            return true;
+        }
+
         const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
+        console.log("[CatCatch] BG: Prepared data for FFmpeg helper page:", JSON.parse(JSON.stringify(data)));
+
         chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, function (tabs) {
-            if (chrome.runtime.lastError || !tabs.length) {
-                chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, function (tab) {
-                    if (chrome.runtime.lastError) { return; }
-                    G.ffmpegConfig.tab = tab.id;
-                    G.ffmpegConfig.cacheData.push(data);
-                });
-                return true;
+            if (chrome.runtime.lastError) {
+                console.error("[CatCatch] BG: Error querying for FFmpeg tab:", chrome.runtime.lastError.message);
+                sendResponse("error_query_ffmpeg_tab");
+                return;
             }
-            if (tabs[0].status == "complete") {
-                chrome.tabs.sendMessage(tabs[0].id, data);
+
+            if (!tabs.length) {
+                console.log("[CatCatch] BG: No existing FFmpeg tab found. Creating new tab for:", G.ffmpegConfig.url);
+                chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, function (tab) {
+                    if (chrome.runtime.lastError) {
+                        console.error("[CatCatch] BG: Error creating FFmpeg tab:", chrome.runtime.lastError.message);
+                        sendResponse("error_create_ffmpeg_tab");
+                        return;
+                    }
+                    if (tab) { // Ensure tab is created
+                        console.log("[CatCatch] BG: FFmpeg tab created. ID:", tab.id, "Status:", tab.status);
+                        G.ffmpegConfig.tab = tab.id;
+                        G.ffmpegConfig.cacheData.push(data);
+                        console.log("[CatCatch] BG: Data cached for FFmpeg tab. Cache size:", G.ffmpegConfig.cacheData.length);
+                    } else {
+                        console.error("[CatCatch] BG: Failed to create FFmpeg tab, tab object is null.");
+                        sendResponse("error_create_ffmpeg_tab_null");
+                    }
+                });
             } else {
-                G.ffmpegConfig.tab = tabs[0].id;
-                G.ffmpegConfig.cacheData.push(data);
+                console.log("[CatCatch] BG: Existing FFmpeg tab found. ID:", tabs[0].id, "Status:", tabs[0].status);
+                if (tabs[0].status == "complete") {
+                    console.log("[CatCatch] BG: FFmpeg tab is complete. Sending message to tabId:", tabs[0].id);
+                    chrome.tabs.sendMessage(tabs[0].id, data, function(response) {
+                        if (chrome.runtime.lastError) {
+                            console.error("[CatCatch] BG: Error sending message to existing FFmpeg tab:", chrome.runtime.lastError.message, "Data:", JSON.parse(JSON.stringify(data)));
+                        } else {
+                            console.log("[CatCatch] BG: Response from FFmpeg tab:", response);
+                        }
+                    });
+                } else {
+                    console.log("[CatCatch] BG: FFmpeg tab not complete. Caching data. Tab ID:", tabs[0].id);
+                    G.ffmpegConfig.tab = tabs[0].id;
+                    G.ffmpegConfig.cacheData.push(data);
+                    console.log("[CatCatch] BG: Data cached for FFmpeg tab. Cache size:", G.ffmpegConfig.cacheData.length);
+                }
             }
         });
-        sendResponse("ok");
+        sendResponse("ok_bg_processed"); // Send response back to m3u8.js
         return true;
     }
     // 发送数据到本地
@@ -957,14 +996,31 @@ chrome.commands.onCommand.addListener(function (command) {
  * 如果是在线ffmpeg 则发送数据
  */
 chrome.webNavigation.onCompleted.addListener(function (details) {
-    if (G.ffmpegConfig.tab && details.tabId == G.ffmpegConfig.tab) {
-        setTimeout(() => {
-            G.ffmpegConfig.cacheData.forEach(data => {
-                chrome.tabs.sendMessage(details.tabId, data);
-            });
-            G.ffmpegConfig.cacheData = [];
-            G.ffmpegConfig.tab = 0;
-        }, 500);
+    if (G.ffmpegConfig.tab && details.tabId == G.ffmpegConfig.tab && details.frameId === 0) { // Ensure it's the main frame
+        console.log("[CatCatch] BG: FFmpeg helper page onCompleted. Tab ID:", details.tabId, "URL:", details.url);
+        // Check if the loaded URL matches the configured FFmpeg URL to avoid sending data to intermediate pages if redirects occur.
+        if (details.url.startsWith(G.ffmpegConfig.url)) {
+            console.log("[CatCatch] BG: FFmpeg helper page URL matches G.ffmpegConfig.url. Processing cache. Cache size:", G.ffmpegConfig.cacheData.length);
+            setTimeout(() => {
+                G.ffmpegConfig.cacheData.forEach(data => {
+                    console.log("[CatCatch] BG: Sending cached data to FFmpeg tab:", details.tabId, JSON.parse(JSON.stringify(data)));
+                    chrome.tabs.sendMessage(details.tabId, data, function(response) {
+                        if (chrome.runtime.lastError) {
+                            console.error("[CatCatch] BG: Error sending cached message to FFmpeg tab:", chrome.runtime.lastError.message);
+                        } else {
+                            console.log("[CatCatch] BG: Response from FFmpeg tab for cached data:", response);
+                        }
+                    });
+                });
+                G.ffmpegConfig.cacheData = [];
+                // G.ffmpegConfig.tab = 0; // Consider keeping G.ffmpegConfig.tab if the tab is meant to be reused. Clearing it means a new tab might be created next time.
+                                         // For now, let's keep the original logic of clearing it.
+                G.ffmpegConfig.tab = 0;
+                console.log("[CatCatch] BG: FFmpeg data cache processed and cleared. G.ffmpegConfig.tab reset.");
+            }, 500); // Delay to allow scripts on the helper page to load
+        } else {
+            console.warn("[CatCatch] BG: FFmpeg helper page loaded a URL that does not match G.ffmpegConfig.url. URL:", details.url, "Config URL:", G.ffmpegConfig.url, "Cache not processed for this load.");
+        }
     }
 });
 

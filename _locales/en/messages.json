@@ -934,5 +934,18 @@
   },
   "alwaysSearch": {
     "message": "Always enable deep search"
+  },
+  "separateMediaDownloaded": {
+    "message": "$PART_TYPE$ part downloaded. If other parts (e.g., video/audio) are also being downloaded, they will be saved separately. To combine them, please use a tool like FFmpeg. Example command: `$EXAMPLE_COMMAND$`",
+    "placeholders": {
+      "part_type": {
+        "content": "$1",
+        "example": "Audio"
+      },
+      "example_command": {
+        "content": "$2",
+        "example": "ffmpeg -i video.mp4 -i audio.m4a -c copy output_merged.mp4"
+      }
+    }
   }
 }
