@@ -17,11 +17,8 @@ async function loadFFmpeg() {
                 // The path needs to be resolvable from the extension's context.
                 // chrome.runtime.getURL is essential here.
                 corePath: chrome.runtime.getURL('lib/ffmpeg.wasm/ffmpeg-core.js'),
-                // For newer versions, it might be just corePath for the .wasm file, and workerPath for worker.js
-                // e.g., corePath: chrome.runtime.getURL('lib/ffmpeg.wasm/ffmpeg-core.wasm'),
-                // workerPath: chrome.runtime.getURL('lib/ffmpeg.wasm/ffmpeg-core.worker.js'),
-                // This depends on the specific version of ffmpeg.wasm being used.
-                // Assuming ffmpeg.min.js handles the exact core/worker loading based on a base path or corePath to the JS.
+                // Explicitly set workerPath for ffmpeg.wasm v0.10.0 to help it find the worker
+                workerPath: chrome.runtime.getURL('lib/ffmpeg.wasm/ffmpeg-core.worker.js'),
             });
         }
         if (!ffmpeg.isLoaded()) {
