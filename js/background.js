@@ -741,6 +741,66 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
             return true;
         }
 
+        // === BEGIN NEW LOGIC FOR INTERNAL ffmpeg-merger.html ===
+        // Check if this is a 'catchMerge' action for exactly two captured blob files
+        if (Message.action === "catchMerge" &&
+            Message.files &&
+            Message.files.length === 2 &&
+            Message.files.every(f => f.data && typeof f.data === 'string' && f.data.startsWith("blob:"))) {
+
+            console.log("[CatCatch] BG: Detected 'catchMerge' for 2 captured blobs. Routing to internal ffmpeg-merger.html");
+            const ffmpegMergerUrl = chrome.runtime.getURL('ffmpeg-merger.html');
+
+            // Prepare filesData for ffmpeg-merger-logic.js
+            // It expects [{url: blobUrl, name: 'input_video.ext', type: 'video'}, {url: blobUrl, name: 'input_audio.ext', type: 'audio'}]
+            // We need to make assumptions or get better type info from catch.js if possible.
+            // For now, assume first is video-like, second is audio-like, or use generic names.
+            const filesForMerger = Message.files.map((file, index) => {
+                let defaultExt = 'mp4';
+                if (file.type) {
+                    const subtype = file.type.split('/')[1];
+                    if (subtype) defaultExt = subtype.split('+')[0]; // Handles things like 'video/mp4+somecodec'
+                }
+                return {
+                    url: file.data,
+                    name: `input_${index === 0 ? 'video' : 'audio'}.${defaultExt}`, // e.g., input_video.mp4, input_audio.m4a
+                    type: file.type || (index === 0 ? 'video/mp4' : 'audio/mp4') // Pass original type or a default
+                };
+            });
+
+            const dataForLocalMerger = {
+                command: 'processCapturedMedia',
+                filesData: filesForMerger,
+                outputFilename: (Message.title || 'merged_capture') + '.mp4'
+            };
+
+            chrome.tabs.create({ url: ffmpegMergerUrl, active: true }, (newTab) => {
+                if (chrome.runtime.lastError || !newTab) {
+                    console.error('[CatCatch] BG: Error creating ffmpeg-merger.html tab:', chrome.runtime.lastError?.message);
+                    sendResponse({status: "error", detail: "Failed to create internal merger tab"});
+                    return;
+                }
+                const tabUpdateListener = (tabId, changeInfo, tab) => {
+                    if (tabId === newTab.id && changeInfo.status === 'complete') {
+                        chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+                        console.log(`[CatCatch] BG: ffmpeg-merger.html tab ${newTab.id} loaded. Sending data:`, JSON.parse(JSON.stringify(dataForLocalMerger)));
+                        chrome.tabs.sendMessage(newTab.id, dataForLocalMerger, (response) => {
+                            if (chrome.runtime.lastError) {
+                                console.error('[CatCatch] BG: Error sending message to ffmpeg-merger.html:', chrome.runtime.lastError.message);
+                            } else {
+                                console.log('[CatCatch] BG: Response from ffmpeg-merger.html:', response);
+                            }
+                        });
+                    }
+                };
+                chrome.tabs.onUpdated.addListener(tabUpdateListener);
+            });
+            sendResponse({status: "ok_internal_ffmpeg_initiated"});
+            return true; // IMPORTANT: End processing here if routed to internal merger
+        }
+        // === END NEW LOGIC FOR INTERNAL ffmpeg-merger.html ===
+
+        // If not routed internally, continue with existing logic for external G.ffmpegConfig.url
         let sourceType = 'm3u8'; // Default to m3u8
         let filesPayload = Message.files; // Default to passing original files
 

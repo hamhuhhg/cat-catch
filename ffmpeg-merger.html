@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>FFmpeg Merger</title>
+    <!-- It's generally recommended to load ffmpeg.min.js here if it's the main entry point -->
+    <!-- However, some ffmpeg.wasm examples load it within the logic script. -->
+    <!-- For now, assuming ffmpeg.min.js handles its own core loading if included this way. -->
+    <!-- If createFFmpeg is directly available from ffmpeg.min.js then this is fine. -->
+    <script src="lib/ffmpeg.wasm/ffmpeg.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 10px; }
+        #status { margin-bottom: 10px; font-weight: bold; }
+        #progress { margin-top: 10px; width: 100%; background-color: #f0f0f0; border: 1px solid #ccc; }
+        #progressBar { width: 0%; height: 20px; background-color: #4CAF50; text-align: center; line-height: 20px; color: white; }
+    </style>
+</head>
+<body>
+    <h1>FFmpeg Media Merger</h1>
+    <div id="status">Initializing... Please wait.</div>
+    <div id="progress">
+        <div id="progressBar">0%</div>
+    </div>
+    <script src="js/ffmpeg-merger-logic.js"></script>
+</body>
+</html>
