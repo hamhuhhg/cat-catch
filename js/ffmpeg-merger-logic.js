@@ -13,12 +13,9 @@ async function loadFFmpeg() {
             const { createFFmpeg, fetchFile } = FFmpeg; // FFmpeg should be global from ffmpeg.min.js
             ffmpeg = createFFmpeg({
                 log: true, // Enable FFmpeg logging to console
-                // corePath needs to be the path to ffmpeg-core.js (or .wasm / .worker.js depending on the ffmpeg.wasm version)
-                // The path needs to be resolvable from the extension's context.
-                // chrome.runtime.getURL is essential here.
                 corePath: chrome.runtime.getURL('lib/ffmpeg.wasm/ffmpeg-core.js'),
-                // Explicitly set workerPath for ffmpeg.wasm v0.10.0 to help it find the worker
-                workerPath: chrome.runtime.getURL('lib/ffmpeg.wasm/ffmpeg-core.worker.js'),
+                // workerPath is removed to attempt to force single-threaded mode if SharedArrayBuffer is unavailable
+                // and if ffmpeg-core.worker.js is also made unavailable by the user.
             });
         }
         if (!ffmpeg.isLoaded()) {
