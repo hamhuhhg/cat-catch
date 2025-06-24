@@ -10,7 +10,8 @@ async function loadFFmpeg() {
     console.log('[FFmpegMerger] Initializing FFmpeg...');
     try {
         if (!ffmpeg) { // Ensure ffmpeg is initialized only once
-            const { createFFmpeg, fetchFile } = FFmpegWASM; // Use FFmpegWASM global from ffmpeg.js (UMD)
+            // Reverting to use FFmpeg based on GitHub Copilot's suggestion for typical UMD export
+            const { createFFmpeg, fetchFile } = FFmpeg;
             // Initialization for ffmpeg.wasm v0.12.x
             // It's generally better at auto-detecting paths for core .wasm and .worker.js (if used)
             // relative to the corePath, or by being in the same directory as ffmpeg.min.js
