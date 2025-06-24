@@ -11,11 +11,14 @@ async function loadFFmpeg() {
     try {
         if (!ffmpeg) { // Ensure ffmpeg is initialized only once
             const { createFFmpeg, fetchFile } = FFmpeg; // FFmpeg should be global from ffmpeg.min.js
+            // Initialization for ffmpeg.wasm v0.12.x
+            // It's generally better at auto-detecting paths for core .wasm and .worker.js (if used)
+            // relative to the corePath, or by being in the same directory as ffmpeg.min.js
+            // We provide corePath to ensure it finds ffmpeg-core.js.
+            // v0.12.x is also better at falling back to single-threaded if SharedArrayBuffer is not available.
             ffmpeg = createFFmpeg({
-                log: true, // Enable FFmpeg logging to console
+                log: true,
                 corePath: chrome.runtime.getURL('lib/ffmpeg.wasm/ffmpeg-core.js'),
-                // workerPath is removed to attempt to force single-threaded mode if SharedArrayBuffer is unavailable
-                // and if ffmpeg-core.worker.js is also made unavailable by the user.
             });
         }
         if (!ffmpeg.isLoaded()) {
