@@ -10,7 +10,7 @@ async function loadFFmpeg() {
     console.log('[FFmpegMerger] Initializing FFmpeg...');
     try {
         if (!ffmpeg) { // Ensure ffmpeg is initialized only once
-            const { createFFmpeg, fetchFile } = FFmpeg; // FFmpeg should be global from ffmpeg.min.js
+            const { createFFmpeg, fetchFile } = FFmpegWASM; // Use FFmpegWASM global from ffmpeg.js (UMD)
             // Initialization for ffmpeg.wasm v0.12.x
             // It's generally better at auto-detecting paths for core .wasm and .worker.js (if used)
             // relative to the corePath, or by being in the same directory as ffmpeg.min.js
