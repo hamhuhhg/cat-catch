@@ -1,4 +1,4 @@
-importScripts("/js/function.js", "/js/init.js");
+importScripts("/js/function.js", "/js/init.js", "/lib/mp4box.all.js"); // Added mp4box.all.js
 
 var tabCaptureStates = new Map();
 var autoCaptureManuallyDisabledTabs = new Set();
@@ -394,9 +394,10 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     if (Message.Message === "getCaptureSettings") {
         if (sender.tab && sender.tab.id) {
             const settingsForClient = {
-                watchedOnCaptureComplete: G.watchedOnCaptureComplete, // Ensure this is sent
-                watchedOnTabClose: G.watchedOnTabClose,           // Ensure this is sent
-                watchedOnNextVideo: G.watchedOnNextVideo         // Ensure this is sent
+                watchedOnCaptureComplete: G.watchedOnCaptureComplete,
+                watchedOnTabClose: G.watchedOnTabClose,
+                watchedOnNextVideo: G.watchedOnNextVideo,
+                mergeCapturedAV: G.mergeCapturedAV // Add the new setting
             };
             // console.log(`Background: Sending settings to tab ${sender.tab.id}`, settingsForClient);
             chrome.tabs.sendMessage(sender.tab.id, {
@@ -688,39 +689,6 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         sendResponse("ok");
         return true;
     }
-    // Handle autoCaptureEnabled change
-    if (changes.autoCaptureEnabled !== undefined) {
-        G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
-        // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
-        const catchScript = G.scriptList.get("catch.js");
-        if (!catchScript) {
-            console.error("CatCatch: catch.js script info not found for storage change handling.");
-            return true; // Return true for async handling
-        }
-
-        if (G.autoCaptureEnabled) {
-            // Auto capture just turned ON. Iterate all tabs and apply logic.
-            chrome.tabs.query({}, function(tabs) {
-                if (chrome.runtime.lastError) {
-                    console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
-                    return;
-                }
-                for (const tab of tabs) {
-                    if (tab.id && tab.url) { // Ensure tab.url is present
-                        manageAutoCaptureForTab(tab.id, tab.url);
-                    }
-                }
-            });
-        } else {
-            // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
-            const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
-            activeTabsCopy.forEach(tabIdToDisable => {
-                // No need to check other conditions like blocklist here. If auto is off, it's off.
-                catchScript.tabId.delete(tabIdToDisable);
-                removeCatchScript(tabIdToDisable, catchScript);
-            });
-        }
-    }
     // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
         const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
@@ -748,6 +716,156 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         try { send2local(Message.action, Message.data, Message.tabId); } catch (e) { console.log(e); }
         sendResponse("ok");
         return true;
+    }
+
+    // Handle merge captured audio/video request
+    if (Message.Message === "mergeCapturedAVRequest") {
+        // console.log("Background: Received mergeCapturedAVRequest", Message);
+        const { files, filenameHint, tabId } = Message;
+
+        if (files && files.length === 2 && filenameHint && tabId) {
+            // Further processing will happen here:
+            // 1. Fetch blobs from dataUrls.
+            // 2. Attempt merge using mux.js or mp4box.js.
+            // 3. Download the result.
+            // This is a placeholder for the actual merge logic.
+            // console.warn("CatCatch: mergeCapturedAVRequest received. Attempting to fetch blobs.");
+
+            Promise.all([
+                fetch(files[0].dataUrl).then(res => res.blob()),
+                fetch(files[1].dataUrl).then(res => res.blob())
+            ]).then(async ([blob1, blob2]) => {
+                URL.revokeObjectURL(files[0].dataUrl);
+                URL.revokeObjectURL(files[1].dataUrl);
+
+                if (typeof MP4Box === 'undefined') {
+                    console.error("CatCatch: MP4Box.js is not available (MP4Box is undefined).");
+                    sendResponse({ success: false, message: "MP4Box.js not found." });
+                    return;
+                }
+
+                const outputMp4File = MP4Box.createFile();
+                let processedFileCount = 0;
+                const totalFilesToProcess = 2;
+                let allSamplesAdded = false;
+
+                const processBlob = (blob, typeHint) => {
+                    return new Promise(async (resolve, reject) => {
+                        const tempMp4File = MP4Box.createFile();
+                        const buffer = await blob.arrayBuffer();
+                        buffer.fileStart = 0; // Important for MP4Box
+
+                        tempMp4File.onReady = (info) => {
+                            // console.log(`MP4Box ready for ${typeHint}:`, info);
+                            let trackAdded = false;
+                            info.tracks.forEach(track => {
+                                // Basic type check, could be more robust using files[0].type and files[1].type
+                                if ((typeHint === "video" && track.type === "video") || (typeHint === "audio" && track.type === "audio")) {
+                                    const newTrack = outputMp4File.addTrack({
+                                        id: track.id, // May need to re-assign if IDs conflict, though unlikely for 2 files
+                                        type: track.type,
+                                        codec: track.codec,
+                                        width: track.video ? track.video.width : undefined,
+                                        height: track.video ? track.video.height : undefined,
+                                        timescale: track.timescale,
+                                        duration: track.duration, // Overall track duration
+                                        language: track.language,
+                                        hdlr: track.hdlr,
+                                        name: track.name,
+                                        nb_samples: track.nb_samples,
+                                        // Critical: copy the sample description box (e.g., avcC, esds)
+                                        description: track.description,
+                                        description_boxes: track.description_boxes
+                                    });
+                                    // console.log(`Added track ${newTrack} to output file from ${typeHint}`);
+                                    trackAdded = true;
+                                    tempMp4File.setExtractionOptions(track.id, null, { nbSamples: 100 }); // Adjust nbSamples as needed
+                                }
+                            });
+                            if (!trackAdded) {
+                                console.warn(`CatCatch: No suitable ${typeHint} track found in one of the blobs.`);
+                                // Potentially resolve here if one track type is optional or handle error
+                            }
+                            tempMp4File.start();
+                        };
+
+                        tempMp4File.onSamples = (track_id, user, samples) => {
+                            // console.log(`Received ${samples.length} samples for track ${track_id} from ${typeHint}`);
+                            const outputTrackId = track_id; // Assuming IDs don't conflict or are mapped
+                            for (const sample of samples) {
+                                outputMp4File.addSample(outputTrackId, sample.data, {
+                                    duration: sample.duration,
+                                    dts: sample.dts,
+                                    cts: sample.cts,
+                                    is_sync: sample.is_sync,
+                                });
+                            }
+                        };
+
+                        tempMp4File.onFlush = () => {
+                            // console.log(`MP4Box flushed for ${typeHint}`);
+                            processedFileCount++;
+                            if (processedFileCount === totalFilesToProcess) {
+                                allSamplesAdded = true;
+                                // console.log("All samples from both files processed and added to output file.");
+                                try {
+                                    const buffer = outputMp4File.getBuffer();
+                                    const mergedBlob = new Blob([buffer], { type: 'video/mp4' });
+                                    chrome.downloads.download({
+                                        url: URL.createObjectURL(mergedBlob),
+                                        filename: filenameHint + "_merged.mp4"
+                                    }, (downloadId) => {
+                                        if (chrome.runtime.lastError) {
+                                            console.error("CatCatch: Download error:", chrome.runtime.lastError);
+                                            sendResponse({ success: false, message: "Download failed: " + chrome.runtime.lastError.message });
+                                        } else {
+                                            sendResponse({ success: true, message: "Merge and download started." });
+                                        }
+                                    });
+                                } catch (e) {
+                                    console.error("CatCatch: Error getting buffer from outputMp4File:", e);
+                                    sendResponse({ success: false, message: "Failed to finalize merged MP4." });
+                                }
+                            }
+                            resolve();
+                        };
+
+                        tempMp4File.onError = (e) => {
+                            console.error(`CatCatch: MP4Box.js error for ${typeHint}:`, e);
+                            reject(e);
+                        };
+
+                        tempMp4File.appendBuffer(buffer);
+                        tempMp4File.flush(); // Start processing
+                    });
+                };
+
+                // Process blobs sequentially to manage track additions.
+                // Heuristic: assume first file is video, second is audio if mime types are generic
+                let firstFileTypeHint = files[0].type.startsWith('video') ? 'video' : 'audio';
+                let secondFileTypeHint = files[1].type.startsWith('audio') ? 'audio' : (files[1].type.startsWith('video') ? 'video' : 'unknown');
+
+                if (firstFileTypeHint === 'audio' && secondFileTypeHint === 'video') { // Swap if needed
+                    [blob1, blob2] = [blob2, blob1];
+                    [firstFileTypeHint, secondFileTypeHint] = [secondFileTypeHint, firstFileTypeHint];
+                }
+
+                processBlob(blob1, firstFileTypeHint)
+                    .then(() => processBlob(blob2, secondFileTypeHint))
+                    .catch(error => {
+                        console.error("CatCatch: Error in merging process:", error);
+                        sendResponse({ success: false, message: "Merging process failed: " + error });
+                    });
+
+            }).catch(error => {
+                console.error("CatCatch: Error fetching blobs for merging:", error);
+                sendResponse({ success: false, message: "Error fetching data for merge." });
+            });
+        } else {
+            console.error("CatCatch: Invalid mergeCapturedAVRequest received.", Message);
+            sendResponse({ success: false, message: "Invalid request parameters." });
+        }
+        return true; // Indicate async response if actual merging is done here.
     }
 });
 

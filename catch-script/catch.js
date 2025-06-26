@@ -1,7 +1,12 @@
 (function () {
     class CatCatcher {
         constructor() {
-            this.settings = { watchedOnCaptureComplete: true, watchedOnTabClose: false, watchedOnNextVideo: false }; // Defaults, will be updated
+            this.settings = {
+                watchedOnCaptureComplete: true,
+                watchedOnTabClose: false,
+                watchedOnNextVideo: false,
+                mergeCapturedAV: false // Default for the new setting
+            };
             this.tabId = null;
             this.boundMessageHandler = this.handleBackgroundMessage.bind(this);
 
@@ -791,7 +796,44 @@
                 }
             }
 
-            downloadWithFFmpeg ? this.downloadWithFFmpeg() : this.downloadDirect();
+            // New logic for client-side merging
+            if (this.settings.mergeCapturedAV && this.catchMedia.length === 2) {
+                // Assuming catchMedia[0] is video and catchMedia[1] is audio, or vice-versa
+                // A more robust check of mime types would be better here.
+                // For now, just check length for simplicity of this step.
+                const mediaToMerge = [];
+                for (let item of this.catchMedia) {
+                    if (!item || !item.bufferList || item.bufferList.length === 0) continue;
+                    const mime = (item.mimeType && item.mimeType.split(';')[0]) || (item.mimeType.includes("video") ? 'video/mp4' : 'audio/mp4');
+                    const fileBlob = new Blob(item.bufferList, { type: mime });
+                    mediaToMerge.push({
+                        blob: fileBlob, // Sending blob directly for background to handle
+                        mimeType: mime,
+                        // type: mime.split('/')[0] || (mime.includes("video") ? "video" : "audio") // type for ffmpeg message, maybe not needed for direct merge
+                    });
+                }
+
+                if (mediaToMerge.length === 2) {
+                    // console.log("CatCatch: Requesting background merge for captured A/V.");
+                    window.postMessage({
+                        action: "catCatchToBackground", // For content-script relay
+                        Message: "mergeCapturedAVRequest", // New message type for background.js
+                        files: [ // Package appropriately for background script
+                            { dataUrl: URL.createObjectURL(mediaToMerge[0].blob), mimeType: mediaToMerge[0].mimeType, type: mediaToMerge[0].mimeType.split('/')[0] }, // Sending ObjectURLs for now
+                            { dataUrl: URL.createObjectURL(mediaToMerge[1].blob), mimeType: mediaToMerge[1].mimeType, type: mediaToMerge[1].mimeType.split('/')[0] }
+                        ],
+                        filenameHint: this.fileName ? this.fileName.innerHTML.trim() : document.title,
+                        tabId: this.tabId
+                    }, "*");
+                } else {
+                    // Fallback if something went wrong with packaging for merge
+                    downloadWithFFmpeg ? this.downloadWithFFmpeg() : this.downloadDirect();
+                }
+
+            } else {
+                // Original logic if not merging client-side
+                downloadWithFFmpeg ? this.downloadWithFFmpeg() : this.downloadDirect();
+            }
 
             if (this.isComplete) {
                 if (localStorage.getItem("CatCatchCatch_completeClearCache") == "checked") { this.clearCache(); }

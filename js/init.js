@@ -171,6 +171,7 @@ G.OptionLists = {
     watchedOnNextVideo: true,
     watchedOnTabClose: true,
     watchedOnCaptureComplete: true,
+    mergeCapturedAV: false, // Added for merging captured audio/video
 };
 // 本地储存的配置
 G.LocalVar = {

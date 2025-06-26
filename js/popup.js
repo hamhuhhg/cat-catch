@@ -786,6 +786,7 @@ const interval = setInterval(function () {
     // 获取模拟手机 自动下载 捕获 状态
     updateButton();
     updateAutoCaptureButtonText(); // Add this call
+    updateMergeCapturedAVButtonText(); // Added for the new toggle
 
     // 上一次设定的倍数
     $("#playbackRate").val(G.playbackRate);
@@ -1039,5 +1040,31 @@ function updateAutoCaptureButtonText() {
         $("#autoCaptureToggle").html(i18n.autoCapturePopupDisable);
     } else {
         $("#autoCaptureToggle").html(i18n.autoCapturePopupEnable);
+    }
+}
+
+// Added for mergeCapturedAV toggle
+$("#mergeCapturedAVToggle").click(function () {
+    G.mergeCapturedAV = !G.mergeCapturedAV;
+    chrome.storage.sync.set({ mergeCapturedAV: G.mergeCapturedAV }, function() {
+        if (chrome.runtime.lastError) {
+            console.error("Error saving mergeCapturedAV:", chrome.runtime.lastError);
+        }
+        updateMergeCapturedAVButtonText();
+    });
+});
+
+function updateMergeCapturedAVButtonText() {
+    // Ensure G and G.mergeCapturedAV are loaded. G is checked in the main interval.
+    if (typeof G.mergeCapturedAV !== 'undefined') {
+        if (G.mergeCapturedAV) {
+            // Using placeholder i18n keys, actual keys would need to be added to messages.json
+            $("#mergeCapturedAVToggle").html(i18n.mergeCapturedAVPopupDisable || "Disable Merge");
+        } else {
+            $("#mergeCapturedAVToggle").html(i18n.mergeCapturedAVPopupEnable || "Enable Merge");
+        }
+    } else {
+        // Fallback if G.mergeCapturedAV isn't loaded, though it should be.
+         $("#mergeCapturedAVToggle").html(i18n.mergeCapturedAVPopupEnable || "Enable Merge");
     }
 }
