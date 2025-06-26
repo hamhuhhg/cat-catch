@@ -934,5 +934,17 @@
   },
   "alwaysSearch": {
     "message": "Always enable deep search"
+  },
+  "mergeCapturedAV": {
+    "message": "Merge Captured Audio/Video (using MP4Box.js)"
+  },
+  "mergeCapturedAVPopupEnable": {
+    "message": "Enable A/V Merge (Capture)"
+  },
+  "mergeCapturedAVPopupDisable": {
+    "message": "Disable A/V Merge (Capture)"
+  },
+  "mergeCapturedAVInTab": {
+    "message": "Merge A/V"
   }
 }

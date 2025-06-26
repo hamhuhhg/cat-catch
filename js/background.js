@@ -691,21 +691,37 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
     }
     // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
-        const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
+        const dataToFfmpegPage = {
+            ...Message, // This will include ffmpegAutoDownload if sent from catch.js
+            Message: "ffmpeg", // Overwrite Message property for the ffmpeg page
+            tabId: Message.tabId ?? sender.tab.id,
+            version: G.ffmpegConfig.version
+        };
+        // console.log("CatCatch: Relaying to FFMPEG page with data:", dataToFfmpegPage);
+
         chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, function (tabs) {
+            let targetUrl = G.ffmpegConfig.url;
+            // If ffmpegAutoDownload is true, try appending it as a URL parameter
+            // This is a guess, the actual FFMPEG page might expect it in the message body
+            if (Message.ffmpegAutoDownload) {
+                targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'autoDownload=true';
+            }
+
             if (chrome.runtime.lastError || !tabs.length) {
-                chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, function (tab) {
+                chrome.tabs.create({ url: targetUrl, active: Message.active ?? true }, function (tab) {
                     if (chrome.runtime.lastError) { return; }
                     G.ffmpegConfig.tab = tab.id;
-                    G.ffmpegConfig.cacheData.push(data);
+                    G.ffmpegConfig.cacheData.push(dataToFfmpegPage);
                 });
                 return true;
             }
+            // If tab exists, we might not be able to change its URL easily to add autoDownload param.
+            // Rely on it being in the message body (dataToFfmpegPage).
             if (tabs[0].status == "complete") {
-                chrome.tabs.sendMessage(tabs[0].id, data);
+                chrome.tabs.sendMessage(tabs[0].id, dataToFfmpegPage);
             } else {
                 G.ffmpegConfig.tab = tabs[0].id;
-                G.ffmpegConfig.cacheData.push(data);
+                G.ffmpegConfig.cacheData.push(dataToFfmpegPage);
             }
         });
         sendResponse("ok");
@@ -867,6 +883,27 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         }
         return true; // Indicate async response if actual merging is done here.
     }
+
+    // Handle setMergeCapturedAVState from catch-script
+    if (Message.Message === "setMergeCapturedAVState") {
+        if (typeof Message.state === 'boolean') {
+            G.mergeCapturedAV = Message.state;
+            chrome.storage.sync.set({ mergeCapturedAV: G.mergeCapturedAV }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error("CatCatch: Error saving mergeCapturedAV state:", chrome.runtime.lastError.message);
+                    sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                } else {
+                    // console.log("CatCatch: mergeCapturedAV state saved to sync:", G.mergeCapturedAV);
+                    sendResponse({ success: true });
+                }
+            });
+        } else {
+            console.error("CatCatch: Invalid state for setMergeCapturedAVState:", Message.state);
+            sendResponse({ success: false, error: "Invalid state." });
+        }
+        return true; // Indicate async response
+    }
+
 });
 
 // 选定标签 更新G.tabId
