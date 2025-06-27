@@ -305,188 +305,152 @@ function save(tabId) {
 /**
  * 监听 扩展 message 事件
  */
+
+
 chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
-    if (chrome.runtime.lastError) { return; }
-    if (!G.initLocalComplete || !G.initSyncComplete) {
-        sendResponse("error");
+    if (chrome.runtime.lastError) { return true; } // Keep 'return true' for async operations if any handler is async
+
+    // Handle getCaptureSettings from catch-script/catch.js (via content-script.js)
+    if (Message.Message === "getCaptureSettings") {
+        if (sender.tab && sender.tab.id) {
+            const settingsForClient = {
+                watchedOnCaptureComplete: G.watchedOnCaptureComplete,
+                watchedOnTabClose: G.watchedOnTabClose,
+                watchedOnNextVideo: G.watchedOnNextVideo,
+                mergeCapturedAV: G.mergeCapturedAV 
+            };
+            chrome.tabs.sendMessage(sender.tab.id, {
+                catCatchMessageRelay: true, for: "catchScript",
+                payload: { action: "receiveSettingsAndTabId", settings: settingsForClient, tabId: sender.tab.id }
+            });
+        }
         return true;
     }
-    // 以下检查是否有 tabId 不存在使用当前标签
+
+    // Handle saveCapturedVideo from catch-script/catch.js
+    if (Message.Message === "saveCapturedVideo") {
+        const videoData = Message.data;
+        if (videoData && videoData.tabId && videoData.filename) {
+            chrome.tabs.sendMessage(videoData.tabId, {
+                catCatchMessageRelay: true, for: "catchScript",
+                payload: { command: "triggerDownloadFromCache", filenameHint: videoData.filename }
+            }, response => { if (chrome.runtime.lastError){ console.warn("Error sending triggerDownloadFromCache: ", chrome.runtime.lastError.message);}});
+        } else { console.warn("CatCatch: Invalid videoData for 'saveCapturedVideo'", videoData); }
+        return true;
+    }
+
+    // Handle updateTabCaptureState from catch-script/catch.js
+    if (Message.Message === "updateTabCaptureState") {
+        if (Message.tabId && Message.captureState) {
+            tabCaptureStates.set(Message.tabId, Message.captureState);
+        }
+        return true;
+    }
+
+    if (!G.initLocalComplete || !G.initSyncComplete) { sendResponse("error"); return true; }
+
+    if (Message.Message === "toggleManualCaptureOverride") {
+        const tabId = Message.tabId || G.tabId;
+        const catchScript = G.scriptList.get("catch.js");
+        if (!catchScript) { sendResponse({ success: false, error: "Script info not found." }); return true; }
+        let newManualOverrideState;
+        if (autoCaptureManuallyDisabledTabs.has(tabId)) {
+            autoCaptureManuallyDisabledTabs.delete(tabId); newManualOverrideState = false;
+            chrome.tabs.get(tabId, function(tab) {
+                if (!chrome.runtime.lastError && tab && tab.url) manageAutoCaptureForTab(tabId, tab.url);
+            });
+        } else {
+            autoCaptureManuallyDisabledTabs.add(tabId); newManualOverrideState = true;
+            if (catchScript.tabId.has(tabId)) {
+                catchScript.tabId.delete(tabId); removeCatchScript(tabId, catchScript);
+            }
+        }
+        chrome.runtime.sendMessage({ Message: "buttonStateUpdated", tabId: tabId });
+        sendResponse({ success: true, manualOverrideActive: newManualOverrideState });
+        return true;
+    }
+
     Message.tabId = Message.tabId ?? G.tabId;
 
-    // 从缓存中保存数据到本地
-    if (Message.Message == "pushData") {
-        (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
-        sendResponse("ok");
-        return true;
-    }
-    // 获取所有数据
-    if (Message.Message == "getAllData") {
-        sendResponse(cacheData);
-        return true;
-    }
-    /**
-     * 设置扩展图标数字
-     * 提供 type 删除标签为 tabId 的数字
-     * 不提供type 删除所有标签的数字
-     */
-    if (Message.Message == "ClearIcon") {
-        Message.type ? SetIcon({ tabId: Message.tabId }) : SetIcon();
-        sendResponse("ok");
-        return true;
-    }
-    // 启用/禁用扩展
+    if (Message.Message == "pushData") { (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData }); sendResponse("ok"); return true; }
+    if (Message.Message == "getAllData") { sendResponse(cacheData); return true; }
+    if (Message.Message == "ClearIcon") { Message.type ? SetIcon({ tabId: Message.tabId }) : SetIcon(); sendResponse("ok"); return true; }
     if (Message.Message == "enable") {
-        G.enable = !G.enable;
-        chrome.storage.sync.set({ enable: G.enable });
+        G.enable = !G.enable; chrome.storage.sync.set({ enable: G.enable });
         chrome.action.setIcon({ path: G.enable ? "/img/icon.png" : "/img/icon-disable.png" });
-        sendResponse(G.enable);
-        return true;
+        sendResponse(G.enable); return true;
     }
-    /**
-     * 提供requestId数组 获取指定的数据
-     */
     if (Message.Message == "getData" && Message.requestId) {
-        // 判断Message.requestId是否数组
-        if (!Array.isArray(Message.requestId)) {
-            Message.requestId = [Message.requestId];
-        }
+        if (!Array.isArray(Message.requestId)) Message.requestId = [Message.requestId];
         const response = [];
         if (Message.requestId.length) {
-            for (let item in cacheData) {
-                for (let data of cacheData[item]) {
-                    if (Message.requestId.includes(data.requestId)) {
-                        response.push(data);
+            for (let itemKey in cacheData) {
+                if(cacheData[itemKey]){
+                    for (let data of cacheData[itemKey]) {
+                        if (Message.requestId.includes(data.requestId)) response.push(data);
                     }
                 }
             }
         }
-        sendResponse(response.length ? response : "error");
-        return true;
+        sendResponse(response.length ? response : "error"); return true;
     }
-    /**
-     * 提供 tabId 获取该标签数据
-     */
-    if (Message.Message == "getData") {
-        sendResponse(cacheData[Message.tabId]);
-        return true;
-    }
-    /**
-     * 获取各按钮状态
-     * 模拟手机 自动下载 启用 以及各种脚本状态
-     */
+    if (Message.Message == "getData") { sendResponse(cacheData[Message.tabId]); return true; }
     if (Message.Message == "getButtonState") {
         let state = {
-            MobileUserAgent: G.featMobileTabId.has(Message.tabId),
-            AutoDown: G.featAutoDownTabId.has(Message.tabId),
-            enable: G.enable,
-        }
-        G.scriptList.forEach(function (item, key) {
-            state[item.key] = item.tabId.has(Message.tabId);
-        });
-        sendResponse(state);
-        return true;
+            MobileUserAgent: G.featMobileTabId.has(Message.tabId), AutoDown: G.featAutoDownTabId.has(Message.tabId),
+            enable: G.enable, autoCaptureEnabled: G.autoCaptureEnabled, 
+            isManuallyDisabled: autoCaptureManuallyDisabledTabs.has(Message.tabId), mergeCapturedAV: G.mergeCapturedAV
+        };
+        G.scriptList.forEach(function (item, key) { state[item.key] = item.tabId.has(Message.tabId); });
+        sendResponse(state); return true;
     }
-    // 对tabId的标签 进行模拟手机操作
     if (Message.Message == "mobileUserAgent") {
         mobileUserAgent(Message.tabId, !G.featMobileTabId.has(Message.tabId));
-        chrome.tabs.reload(Message.tabId, { bypassCache: true });
-        sendResponse("ok");
-        return true;
+        chrome.tabs.reload(Message.tabId, { bypassCache: true }); sendResponse("ok"); return true;
     }
-    // 对tabId的标签 开启 关闭 自动下载
     if (Message.Message == "autoDown") {
-        if (G.featAutoDownTabId.has(Message.tabId)) {
-            G.featAutoDownTabId.delete(Message.tabId);
-        } else {
-            G.featAutoDownTabId.add(Message.tabId);
-        }
+        G.featAutoDownTabId.has(Message.tabId) ? G.featAutoDownTabId.delete(Message.tabId) : G.featAutoDownTabId.add(Message.tabId);
         (chrome.storage.session ?? chrome.storage.local).set({ featAutoDownTabId: Array.from(G.featAutoDownTabId) });
-        sendResponse("ok");
-        return true;
+        sendResponse("ok"); return true;
     }
-    // 对tabId的标签 脚本注入或删除
     if (Message.Message == "script") {
-        if (!G.scriptList.has(Message.script)) {
-            sendResponse("error no exists");
-            return false;
+        if (Message.script === "catch.js" && G.autoCaptureEnabled) {
+            sendResponse({ success: false, error: "Use toggleManualCaptureOverride when auto-capture is on." }); return true;
         }
-        const script = G.scriptList.get(Message.script);
-        const scriptTabid = script.tabId;
+        if (!G.scriptList.has(Message.script)) { sendResponse("error no exists"); return false; }
+        const script = G.scriptList.get(Message.script); const scriptTabid = script.tabId;
         const refresh = Message.refresh ?? script.refresh;
         if (scriptTabid.has(Message.tabId)) {
             scriptTabid.delete(Message.tabId);
-            if (Message.script == "search.js") {
-                G.deepSearchTemporarilyClose = Message.tabId;
-            }
-            refresh && chrome.tabs.reload(Message.tabId, { bypassCache: true });
-            sendResponse("ok");
-            return true;
+            if (Message.script == "search.js") G.deepSearchTemporarilyClose = Message.tabId;
+            refresh && chrome.tabs.reload(Message.tabId, { bypassCache: true }); sendResponse("ok"); return true;
         }
         scriptTabid.add(Message.tabId);
-        if (refresh) {
-            chrome.tabs.reload(Message.tabId, { bypassCache: true });
-        } else {
+        if (refresh) { chrome.tabs.reload(Message.tabId, { bypassCache: true }); }
+        else {
             const files = [`catch-script/${Message.script}`];
             script.i18n && files.unshift("catch-script/i18n.js");
-            chrome.scripting.executeScript({
-                target: { tabId: Message.tabId, allFrames: script.allFrames },
-                files: files,
-                injectImmediately: true,
-                world: script.world
-            });
+            chrome.scripting.executeScript({ target: { tabId: Message.tabId, allFrames: script.allFrames }, files: files, injectImmediately: true, world: script.world });
         }
-        sendResponse("ok");
-        return true;
+        sendResponse("ok"); return true;
     }
-    // 脚本注入 脚本申请多语言文件
     if (Message.Message == "scriptI18n") {
-        chrome.scripting.executeScript({
-            target: { tabId: Message.tabId, allFrames: true },
-            files: ["catch-script/i18n.js"],
-            injectImmediately: true,
-            world: "MAIN"
-        });
-        sendResponse("ok");
-        return true;
+        chrome.scripting.executeScript({ target: { tabId: Message.tabId, allFrames: true }, files: ["catch-script/i18n.js"], injectImmediately: true, world: "MAIN" });
+        sendResponse("ok"); return true;
     }
-    // Heart Beat
     if (Message.Message == "HeartBeat") {
         chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-            if (tabs[0] && tabs[0].id) {
-                G.tabId = tabs[0].id;
-            }
+            if (tabs[0] && tabs[0].id) G.tabId = tabs[0].id;
         });
-        sendResponse("HeartBeat OK");
-        return true;
+        sendResponse("HeartBeat OK"); return true;
     }
-    // 清理数据
     if (Message.Message == "clearData") {
-        // 当前标签
-        if (Message.type) {
-            delete cacheData[Message.tabId];
-            (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
-            clearRedundant();
-            sendResponse("OK");
-            return true;
-        }
-        // 其他标签
-        for (let item in cacheData) {
-            if (item == Message.tabId) { continue; }
-            delete cacheData[item];
-        }
+        if (Message.type) { delete cacheData[Message.tabId]; }
+        else { for (let itemKey in cacheData) { if (itemKey == Message.tabId) continue; delete cacheData[itemKey]; } }
         (chrome.storage.session ?? chrome.storage.local).set({ MediaData: cacheData });
-        clearRedundant();
-        sendResponse("OK");
-        return true;
+        clearRedundant(); sendResponse("OK"); return true;
     }
-    // 清理冗余数据
-    if (Message.Message == "clearRedundant") {
-        clearRedundant();
-        sendResponse("OK");
-        return true;
-    }
-    // 从 content-script 或 catch-script 传来的媒体url
+    if (Message.Message == "clearRedundant") { clearRedundant(); sendResponse("OK"); return true; }
     if (Message.Message == "addMedia") {
         chrome.tabs.query({}, function (tabs) {
             for (let item of tabs) {
@@ -497,39 +461,211 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
             }
             findMedia({ url: Message.url, tabId: -1, extraExt: Message.extraExt, mime: Message.mime, requestId: Message.requestId, initiator: Message.href, requestHeaders: Message.requestHeaders }, true, true);
         });
-        sendResponse("ok");
-        return true;
+        sendResponse("ok"); return true;
     }
-    // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
-        const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
+        const dataToFfmpegPage = { 
+            ...Message, 
+            Message: "ffmpeg", 
+            tabId: Message.tabId ?? sender.tab.id, 
+            version: G.ffmpegConfig.version 
+        };
+        let targetUrl = G.ffmpegConfig.url;
+        if (Message.ffmpegAutoDownload) {
+            targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'autoDownload=true';
+        }
         chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, function (tabs) {
             if (chrome.runtime.lastError || !tabs.length) {
-                chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, function (tab) {
+                chrome.tabs.create({ url: targetUrl, active: Message.active ?? true }, function (tab) {
                     if (chrome.runtime.lastError) { return; }
-                    G.ffmpegConfig.tab = tab.id;
-                    G.ffmpegConfig.cacheData.push(data);
-                });
-                return true;
+                    G.ffmpegConfig.tab = tab.id; G.ffmpegConfig.cacheData.push(dataToFfmpegPage);
+                }); return true;
             }
-            if (tabs[0].status == "complete") {
-                chrome.tabs.sendMessage(tabs[0].id, data);
-            } else {
-                G.ffmpegConfig.tab = tabs[0].id;
-                G.ffmpegConfig.cacheData.push(data);
-            }
+            if (tabs[0].status == "complete") { chrome.tabs.sendMessage(tabs[0].id, dataToFfmpegPage); }
+            else { G.ffmpegConfig.tab = tabs[0].id; G.ffmpegConfig.cacheData.push(dataToFfmpegPage); }
         });
-        sendResponse("ok");
-        return true;
+        sendResponse("ok"); return true;
     }
-    // 发送数据到本地
     if (Message.Message == "send2local" && G.send2local) {
         try { send2local(Message.action, Message.data, Message.tabId); } catch (e) { console.log(e); }
-        sendResponse("ok");
-        return true;
+        sendResponse("ok"); return true;
     }
-});
 
+    if (Message.Message === "mergeCapturedAVRequest") {
+        const { files, filenameHint, tabId } = Message;
+        if (files && files.length === 2 && filenameHint && tabId) {
+            Promise.all([
+                fetch(files[0].dataUrl).then(res => res.blob()),
+                fetch(files[1].dataUrl).then(res => res.blob())
+            ]).then(async ([blob1, blob2]) => {
+                URL.revokeObjectURL(files[0].dataUrl);
+                URL.revokeObjectURL(files[1].dataUrl);
+
+                if (typeof MP4Box === 'undefined') {
+                    console.error("CatCatch: MP4Box.js is not available (MP4Box is undefined).");
+                    sendResponse({ success: false, message: "MP4Box.js not found." });
+                    return;
+                }
+
+                const outputMp4File = MP4Box.createFile();
+                let processedFileCount = 0;
+                const totalFilesToProcess = 2;
+                const trackIdMap = new Map();
+
+                const processFile = (blob, fileIdentifierHint) => {
+                    return new Promise(async (resolve, reject) => {
+                        const tempMp4File = MP4Box.createFile();
+                        const buffer = await blob.arrayBuffer();
+                        buffer.fileStart = 0;
+
+                        tempMp4File.onReady = (info) => {
+                            let trackProcessed = false;
+                            if (info.tracks && info.tracks.length > 0) {
+                                info.tracks.forEach(track => {
+                                    if (!trackProcessed && 
+                                        (track.type === fileIdentifierHint || 
+                                         (fileIdentifierHint === "video" && track.type !== "audio") || 
+                                         (fileIdentifierHint === "audio" && track.type !== "video"))
+                                       ) {
+                                        const newTrackOpts = {
+                                            type: track.type,
+                                            codec: track.codec,
+                                            width: track.video ? track.video.width : undefined,
+                                            height: track.video ? track.video.height : undefined,
+                                            timescale: track.timescale,
+                                            duration: track.duration,
+                                            language: track.language,
+                                            hdlr_name: track.hdlr_name,
+                                            name: track.name,
+                                            nb_samples: track.nb_samples,
+                                            description: track.description
+                                        };
+                                        const newTrackId = outputMp4File.addTrack(newTrackOpts);
+                                        trackIdMap.set(track.id, newTrackId);
+                                        tempMp4File.setExtractionOptions(track.id, null, { nbSamples: track.nb_samples || 0 });
+                                        trackProcessed = true;
+                                    }
+                                });
+                                 if (!trackProcessed && info.tracks.length > 0) { 
+                                    const track = info.tracks[0]; // Fallback to first track
+                                    console.warn(`CatCatch: Could not find '${fileIdentifierHint}' track, using first available track ID ${track.id} (type ${track.type}) as fallback.`);
+                                    const newTrackOpts = {type: track.type, codec: track.codec, width: track.video ? track.video.width : undefined, height: track.video ? track.video.height : undefined, timescale: track.timescale, duration: track.duration, language: track.language, hdlr_name: track.hdlr_name, name: track.name, nb_samples: track.nb_samples, description: track.description };
+                                    const newTrackId = outputMp4File.addTrack(newTrackOpts);
+                                    trackIdMap.set(track.id, newTrackId);
+                                    tempMp4File.setExtractionOptions(track.id, null, { nbSamples: track.nb_samples || 0 });
+                                    trackProcessed = true; // Mark as processed with fallback
+                                 }
+                            }
+                            if (!trackProcessed) {
+                                console.error(`CatCatch: No suitable tracks found or processed in blob identified as ${fileIdentifierHint}.`);
+                                reject(new Error(`No suitable tracks in ${fileIdentifierHint} blob.`));
+                                return;
+                            }
+                            tempMp4File.start();
+                        };
+
+                        tempMp4File.onSamples = (inputTrackId, user, samples) => {
+                            const outputTrackId = trackIdMap.get(inputTrackId);
+                            if (outputTrackId !== undefined) {
+                                for (const sample of samples) {
+                                    outputMp4File.addSample(outputTrackId, sample.data, {
+                                        duration: sample.duration,
+                                        dts: sample.dts,
+                                        cts: sample.cts,
+                                        is_sync: sample.is_sync,
+                                    });
+                                }
+                            }
+                        };
+                        
+                        tempMp4File.onFlush = () => {
+                            processedFileCount++;
+                            if (processedFileCount === totalFilesToProcess) {
+                                try {
+                                    const mergedBuffer = outputMp4File.getBuffer();
+                                    const mergedBlob = new Blob([mergedBuffer], { type: 'video/mp4' });
+                                    chrome.downloads.download({
+                                        url: URL.createObjectURL(mergedBlob),
+                                        filename: filenameHint + "_merged.mp4"
+                                    }, (downloadId) => {
+                                        if (chrome.runtime.lastError) {
+                                            console.error("CatCatch: Download error:", chrome.runtime.lastError.message);
+                                            sendResponse({ success: false, message: "Download failed: " + chrome.runtime.lastError.message });
+                                        } else {
+                                            sendResponse({ success: true, message: "Merge and download started." });
+                                        }
+                                    });
+                                } catch (e) {
+                                    console.error("CatCatch: Error getting buffer from outputMp4File:", e);
+                                    sendResponse({ success: false, message: "Failed to finalize merged MP4: " + e.message });
+                                }
+                            }
+                            resolve();
+                        };
+
+                        tempMp4File.onError = (e) => {
+                            console.error(`CatCatch: MP4Box.js error for ${fileIdentifierHint}:`, e);
+                            reject(e);
+                        };
+                        
+                        tempMp4File.appendBuffer(buffer);
+                        tempMp4File.flush();
+                    });
+                };
+                
+                (async () => {
+                    try {
+                        let firstFileHint = files[0].mimeType && files[0].mimeType.startsWith('video/') ? "video" : (files[0].mimeType && files[0].mimeType.startsWith('audio/') ? "audio" : "unknown");
+                        let secondFileHint = files[1].mimeType && files[1].mimeType.startsWith('audio/') ? "audio" : (files[1].mimeType && files[1].mimeType.startsWith('video/') ? "video" : "unknown");
+
+                        // Determine processing order: video then audio is typical
+                        if (firstFileHint === "audio" && secondFileHint === "video") {
+                            await processFile(blob2, "video"); // Process second blob (video) first
+                            await processFile(blob1, "audio"); // Then first blob (audio)
+                        } else {
+                            // Default: process blob1 (assumed video or first given) then blob2 (assumed audio or second given)
+                            // If hints are unknown, this relies on the order they were sent
+                            await processFile(blob1, firstFileHint === "unknown" ? "video" : firstFileHint); 
+                            await processFile(blob2, secondFileHint === "unknown" ? "audio" : secondFileHint);
+                        }
+                    } catch (error) {
+                        console.error("CatCatch: Error in merging process with MP4Box:", error);
+                        sendResponse({ success: false, message: "Merging process failed: " + error.message });
+                    }
+                })();
+
+            }).catch(error => {
+                console.error("CatCatch: Error fetching blobs for merging:", error);
+                sendResponse({ success: false, message: "Error fetching data for merge." });
+            });
+        } else {
+            console.error("CatCatch: Invalid mergeCapturedAVRequest received.", Message);
+            sendResponse({ success: false, message: "Invalid request parameters." });
+        }
+        return true; 
+    }
+
+    if (Message.Message === "setMergeCapturedAVState") {
+        if (typeof Message.state === 'boolean') {
+            G.mergeCapturedAV = Message.state;
+            chrome.storage.sync.set({ mergeCapturedAV: G.mergeCapturedAV }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error("CatCatch: Error saving mergeCapturedAV state:", chrome.runtime.lastError.message);
+                    sendResponse({ success: false, error: chrome.runtime.lastError.message });
+                } else {
+                    sendResponse({ success: true });
+                }
+            });
+        } else {
+            console.error("CatCatch: Invalid state for setMergeCapturedAVState:", Message.state);
+            sendResponse({ success: false, error: "Invalid state." });
+        }
+        return true; 
+    }
+    // If no message was handled by this point, it might be an idea to send a default response
+    // or ensure all message types are covered or explicitly ignored.
+    // For now, we assume any message not caught above doesn't require a response or is handled elsewhere.
+});
 // 选定标签 更新G.tabId
 // chrome.tabs.onHighlighted.addListener(function (activeInfo) {
 //     if (activeInfo.windowId == -1 || !activeInfo.tabIds || !activeInfo.tabIds.length) { return; }
