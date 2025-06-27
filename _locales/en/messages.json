@@ -935,16 +935,16 @@
   "alwaysSearch": {
     "message": "Always enable deep search"
   },
-  "mergeCapturedAV": {
-    "message": "Merge Captured Audio/Video (using MP4Box.js)"
+  "mergeCapturedAVLabel": {
+    "message": "Merge Captured Audio/Video (Local MP4Box)"
   },
   "mergeCapturedAVPopupEnable": {
-    "message": "Enable A/V Merge (Capture)"
+    "message": "Enable Local Merge"
   },
   "mergeCapturedAVPopupDisable": {
-    "message": "Disable A/V Merge (Capture)"
+    "message": "Disable Local Merge"
   },
-  "mergeCapturedAVInTab": {
-    "message": "Merge A/V"
+  "mergeCapturedAVInTabLabel": {
+    "message": "Merge A/V (Local)"
   }
 }

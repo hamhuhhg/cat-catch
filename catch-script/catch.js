@@ -1,12 +1,7 @@
 (function () {
     class CatCatcher {
         constructor() {
-            this.settings = {
-                watchedOnCaptureComplete: true,
-                watchedOnTabClose: false,
-                watchedOnNextVideo: false,
-                mergeCapturedAV: false // Default for the new setting
-            };
+            this.settings = { watchedOnCaptureComplete: true, watchedOnTabClose: false, watchedOnNextVideo: false }; // Defaults, will be updated
             this.tabId = null;
             this.boundMessageHandler = this.handleBackgroundMessage.bind(this);
 
@@ -70,25 +65,6 @@
                     if (settings) {
                         this.settings = { ...this.settings, ...settings };
                         // console.log("CatCatch (original): Settings updated:", this.settings);
-                        const clientMergeAVCheckbox = this.catCatch.querySelector("#clientMergeAV");
-                        const ffmpegCheckbox = this.catCatch.querySelector("#ffmpeg");
-
-                        if (clientMergeAVCheckbox && ffmpegCheckbox) {
-                            // Prioritize this.settings.mergeCapturedAV (from sync storage)
-                            clientMergeAVCheckbox.checked = !!this.settings.mergeCapturedAV;
-
-                            if (this.settings.mergeCapturedAV && localStorage.getItem("CatCatchCatch_ffmpeg") === "checked") {
-                                // If client merge is on, ensure localStorage ffmpeg is off
-                                localStorage.setItem("CatCatchCatch_ffmpeg", "");
-                            }
-                            ffmpegCheckbox.checked = localStorage.getItem("CatCatchCatch_ffmpeg") === "checked";
-
-                            // Final safety check: if both ended up checked, clientMergeAV wins
-                            if (clientMergeAVCheckbox.checked && ffmpegCheckbox.checked) {
-                                ffmpegCheckbox.checked = false;
-                                localStorage.setItem("CatCatchCatch_ffmpeg", "");
-                            }
-                        }
                     }
                     if (tabId) {
                         this.tabId = tabId;
@@ -203,7 +179,6 @@
                 <div><button id="hide" ${buttonStyle} data-i18n="hide">隐藏</button><button id="close" ${buttonStyle} data-i18n="close">关闭</button></div>
                 <label><input type="checkbox" id="autoDown" ${localStorage.getItem("CatCatchCatch_autoDown") || ""} ${checkboxStyle}><span data-i18n="automaticDownload">完成捕获自动下载</span></label>
                 <label><input type="checkbox" id="ffmpeg" ${localStorage.getItem("CatCatchCatch_ffmpeg") || ""} ${checkboxStyle}><span data-i18n="ffmpeg">使用ffmpeg合并</span></label>
-                <label><input type="checkbox" id="clientMergeAV" ${checkboxStyle}><span data-i18n="mergeCapturedAVInTab">合并音视频</span></label> <!-- New Checkbox for Client-side A/V Merge -->
                 <label><input type="checkbox" id="autoToBuffered" ${checkboxStyle}><span data-i18n="autoToBuffered">自动跳转缓冲尾</span></label>
                 <label><input type="checkbox" id="checkHead" ${checkboxStyle}>清理多余头部数据</label>
                 <label><input type="checkbox" id="completeClearCache" ${localStorage.getItem("CatCatchCatch_completeClearCache") || ""} ${checkboxStyle}>下载完成后清空数据</label>
@@ -346,13 +321,6 @@
             const ffmpeg = this.catCatch.querySelector("#ffmpeg");
             if (ffmpeg) ffmpeg.addEventListener('change', this.handleFfmpegChange.bind(this));
 
-            const clientMergeAV = this.catCatch.querySelector("#clientMergeAV");
-            if (clientMergeAV) {
-                // Set initial state when settings are loaded
-                // This will be done in handleBackgroundMessage when settings are received.
-                clientMergeAV.addEventListener('change', this.handleClientMergeAVChange.bind(this));
-            }
-
             const restartAlways = this.catCatch.querySelector("#restartAlways");
             if (restartAlways) restartAlways.addEventListener('change', this.handleRestartAlwaysChange.bind(this));
 
@@ -464,42 +432,7 @@
         }
 
         handleFfmpegChange(event) {
-            const ffmpegChecked = event.target.checked;
-            localStorage.setItem("CatCatchCatch_ffmpeg", ffmpegChecked ? "checked" : "");
-
-            if (ffmpegChecked) {
-                const clientMergeAVCheckbox = this.catCatch.querySelector("#clientMergeAV");
-                if (clientMergeAVCheckbox && clientMergeAVCheckbox.checked) {
-                    clientMergeAVCheckbox.checked = false;
-                    // Dispatch change event to trigger its handler, or call its handler directly
-                    // Calling handler directly is simpler here.
-                    this.handleClientMergeAVChange({ target: clientMergeAVCheckbox });
-                }
-            }
-        }
-
-        handleClientMergeAVChange(event) {
-            const newState = event.target.checked;
-            this.settings.mergeCapturedAV = newState;
-            // console.log("CatCatch: ClientMergeAV changed to", newState);
-
-            if (newState) {
-                const ffmpegCheckbox = this.catCatch.querySelector("#ffmpeg");
-                if (ffmpegCheckbox && ffmpegCheckbox.checked) {
-                    ffmpegCheckbox.checked = false;
-                    localStorage.setItem("CatCatchCatch_ffmpeg", "");
-                    // No need to call its handler as it won't recursively call this one back
-                    // if it's being unchecked.
-                }
-            }
-
-            // Inform background script to update chrome.storage.sync
-            window.postMessage({
-                action: "catCatchToBackground", // For content-script relay
-                Message: "setMergeCapturedAVState",
-                state: newState,
-                tabId: this.tabId // Include tabId if background needs it, though for sync storage it might not
-            }, "*");
+            localStorage.setItem("CatCatchCatch_ffmpeg", event.target.checked ? "checked" : "");
         }
 
         handleRestartAlwaysChange(event) {
@@ -725,7 +658,7 @@
                             // MODIFIED PART: Use settings from background.js instead of localStorage
                             if (this.settings && this.settings.watchedOnCaptureComplete) {
                                 // console.log("CatCatch (original): 'watchedOnCaptureComplete' is true, triggering download.");
-                                setTimeout(() => this.catchDownload({ isAutoTrigger: true }), 500);
+                                setTimeout(() => this.catchDownload(), 500);
                             }
                         }
                     } catch (error) {
@@ -797,11 +730,8 @@
 
         /**
          * 下载捕获的数据
-         * @param {object} [options={}]
-         * @param {boolean} [options.isAutoTrigger=false] - Whether the download was triggered automatically.
          */
-        catchDownload(options = {}) {
-            const { isAutoTrigger = false } = options;
+        catchDownload() {
             if (this.catchMedia.length == 0) {
                 alert(this.i18n("noData", "没抓到有效数据"));
                 return;
@@ -861,47 +791,7 @@
                 }
             }
 
-            // New logic for client-side merging
-            if (this.settings.mergeCapturedAV && this.catchMedia.length === 2) {
-                // Client-side merging handles its own download via background script,
-                // so isAutoTrigger might not be directly relevant here unless background needs it.
-                // For now, we assume the background merge will just download.
-                // If auto-download needs to be suppressed for client-side merge, this logic would change.
-                // A more robust check of mime types would be better here.
-                // For now, just check length for simplicity of this step.
-                const mediaToMerge = [];
-                for (let item of this.catchMedia) {
-                    if (!item || !item.bufferList || item.bufferList.length === 0) continue;
-                    const mime = (item.mimeType && item.mimeType.split(';')[0]) || (item.mimeType.includes("video") ? 'video/mp4' : 'audio/mp4');
-                    const fileBlob = new Blob(item.bufferList, { type: mime });
-                    mediaToMerge.push({
-                        blob: fileBlob, // Sending blob directly for background to handle
-                        mimeType: mime,
-                        // type: mime.split('/')[0] || (mime.includes("video") ? "video" : "audio") // type for ffmpeg message, maybe not needed for direct merge
-                    });
-                }
-
-                if (mediaToMerge.length === 2) {
-                    // console.log("CatCatch: Requesting background merge for captured A/V.");
-                    window.postMessage({
-                        action: "catCatchToBackground", // For content-script relay
-                        Message: "mergeCapturedAVRequest", // New message type for background.js
-                        files: [ // Package appropriately for background script
-                            { dataUrl: URL.createObjectURL(mediaToMerge[0].blob), mimeType: mediaToMerge[0].mimeType, type: mediaToMerge[0].mimeType.split('/')[0] }, // Sending ObjectURLs for now
-                            { dataUrl: URL.createObjectURL(mediaToMerge[1].blob), mimeType: mediaToMerge[1].mimeType, type: mediaToMerge[1].mimeType.split('/')[0] }
-                        ],
-                        filenameHint: this.fileName ? this.fileName.innerHTML.trim() : document.title,
-                        tabId: this.tabId
-                    }, "*");
-                } else {
-                    // Fallback if something went wrong with packaging for merge
-                    downloadWithFFmpeg ? this.downloadWithFFmpeg({ isAutoTrigger }) : this.downloadDirect({ isAutoTrigger });
-                }
-
-            } else {
-                // Original logic if not merging client-side
-                downloadWithFFmpeg ? this.downloadWithFFmpeg({ isAutoTrigger }) : this.downloadDirect({ isAutoTrigger });
-            }
+            downloadWithFFmpeg ? this.downloadWithFFmpeg() : this.downloadDirect();
 
             if (this.isComplete) {
                 if (localStorage.getItem("CatCatchCatch_completeClearCache") == "checked") { this.clearCache(); }
@@ -913,11 +803,8 @@
 
         /**
          * 使用FFmpeg合并下载捕获的数据
-         * @param {object} [options={}]
-         * @param {boolean} [options.isAutoTrigger=false]
          */
-        downloadWithFFmpeg(options = {}) {
-            const { isAutoTrigger = false } = options;
+        downloadWithFFmpeg() {
             const media = [];
             for (let item of this.catchMedia) {
                 if (!item || !item.bufferList || item.bufferList.length === 0) continue;
@@ -945,8 +832,7 @@
                 files: media,
                 title: title,
                 output: title,
-                quantity: media.length,
-                ffmpegAutoDownload: isAutoTrigger // Pass the flag
+                quantity: media.length
             });
         }
         /**

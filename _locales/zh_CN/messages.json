@@ -935,16 +935,16 @@
   "alwaysSearch": {
     "message": "始终打开深度搜索"
   },
-  "mergeCapturedAV": {
-    "message": "合并捕获的音视频 (使用 MP4Box.js)"
+  "mergeCapturedAVLabel": {
+    "message": "合并捕获的音视频 (本地MP4Box)"
   },
   "mergeCapturedAVPopupEnable": {
-    "message": "启用音视频合并 (捕获)"
+    "message": "启用本地合并"
   },
   "mergeCapturedAVPopupDisable": {
-    "message": "禁用音视频合并 (捕获)"
+    "message": "禁用本地合并"
   },
-  "mergeCapturedAVInTab": {
-    "message": "合并音视频"
+  "mergeCapturedAVInTabLabel": {
+    "message": "合并音视频 (本地)"
   }
 }
