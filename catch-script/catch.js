@@ -5,6 +5,23 @@
             this.tabId = null;
             this.boundMessageHandler = this.handleBackgroundMessage.bind(this);
 
+            // Dynamically load ffmpeg.min.js
+            if (typeof FFmpeg === 'undefined') {
+                const script = document.createElement('script');
+                script.src = chrome.runtime.getURL('lib/ffmpeg.min.js');
+                script.onload = () => {
+                    console.log("ffmpeg.min.js loaded successfully");
+                    this.ffmpegLoaded = true;
+                };
+                script.onerror = () => {
+                    console.error("Failed to load ffmpeg.min.js");
+                    this.ffmpegLoaded = false;
+                };
+                (document.head || document.documentElement).appendChild(script);
+            } else {
+                this.ffmpegLoaded = true;
+            }
+
             console.log("catch.js Start");
 
             // 初始化属性
@@ -179,6 +196,7 @@
                 <div><button id="hide" ${buttonStyle} data-i18n="hide">隐藏</button><button id="close" ${buttonStyle} data-i18n="close">关闭</button></div>
                 <label><input type="checkbox" id="autoDown" ${localStorage.getItem("CatCatchCatch_autoDown") || ""} ${checkboxStyle}><span data-i18n="automaticDownload">完成捕获自动下载</span></label>
                 <label><input type="checkbox" id="ffmpeg" ${localStorage.getItem("CatCatchCatch_ffmpeg") || ""} ${checkboxStyle}><span data-i18n="ffmpeg">使用ffmpeg合并</span></label>
+                <label><input type="checkbox" id="mergeVideoAudio" ${localStorage.getItem("CatCatchCatch_mergeVideoAudio") || ""} ${checkboxStyle}><span data-i18n="mergeVideoAudio">合并音视频</span></label>
                 <label><input type="checkbox" id="autoToBuffered" ${checkboxStyle}><span data-i18n="autoToBuffered">自动跳转缓冲尾</span></label>
                 <label><input type="checkbox" id="checkHead" ${checkboxStyle}>清理多余头部数据</label>
                 <label><input type="checkbox" id="completeClearCache" ${localStorage.getItem("CatCatchCatch_completeClearCache") || ""} ${checkboxStyle}>下载完成后清空数据</label>
@@ -321,6 +339,9 @@
             const ffmpeg = this.catCatch.querySelector("#ffmpeg");
             if (ffmpeg) ffmpeg.addEventListener('change', this.handleFfmpegChange.bind(this));
 
+            const mergeVideoAudio = this.catCatch.querySelector("#mergeVideoAudio");
+            if (mergeVideoAudio) mergeVideoAudio.addEventListener('change', this.handleMergeVideoAudioChange.bind(this));
+
             const restartAlways = this.catCatch.querySelector("#restartAlways");
             if (restartAlways) restartAlways.addEventListener('change', this.handleRestartAlwaysChange.bind(this));
 
@@ -433,6 +454,10 @@
 
         handleFfmpegChange(event) {
             localStorage.setItem("CatCatchCatch_ffmpeg", event.target.checked ? "checked" : "");
+        }
+
+        handleMergeVideoAudioChange(event) {
+            localStorage.setItem("CatCatchCatch_mergeVideoAudio", event.target.checked ? "checked" : "");
         }
 
         handleRestartAlwaysChange(event) {
@@ -738,6 +763,7 @@
             }
 
             let downloadWithFFmpeg = this.catchMedia.length >= 2 && localStorage.getItem("CatCatchCatch_ffmpeg") == "checked";
+            let mergeVideoAudio = localStorage.getItem("CatCatchCatch_mergeVideoAudio") == "checked";
 
             /**
              * 检查文件
@@ -791,7 +817,17 @@
                 }
             }
 
-            downloadWithFFmpeg ? this.downloadWithFFmpeg() : this.downloadDirect();
+            if (downloadWithFFmpeg) {
+                this.downloadWithFFmpeg();
+            } else if (mergeVideoAudio && this.catchMedia.length === 2) {
+                // Assuming the first is video and the second is audio
+                const videoFile = new Blob(this.catchMedia[0].bufferList, { type: this.catchMedia[0].mimeType });
+                const audioFile = new Blob(this.catchMedia[1].bufferList, { type: this.catchMedia[1].mimeType });
+                this.mergeAndDownload(videoFile, audioFile);
+            }
+            else {
+                this.downloadDirect();
+            }
 
             if (this.isComplete) {
                 if (localStorage.getItem("CatCatchCatch_completeClearCache") == "checked") { this.clearCache(); }
@@ -834,6 +870,55 @@
                 output: title,
                 quantity: media.length
             });
+        }
+
+        async mergeAndDownload(videoFile, audioFile) {
+            this.tips.innerHTML = this.i18n("mergingInProgress", "合并中，请稍候...");
+            try {
+                // Dynamically import ffmpeg.wasm
+                const { createFFmpeg, fetchFile } = FFmpeg; // Assuming FFmpeg is globally available after import
+                const ffmpeg = createFFmpeg({
+                    log: true, // Enable FFmpeg logging to console
+                    corePath: chrome.runtime.getURL('lib/ffmpeg-core.js'), // Path to ffmpeg-core.js
+                });
+
+                await ffmpeg.load();
+                this.tips.innerHTML = this.i18n("ffmpegLoaded", "FFmpeg 已加载, 开始合并...");
+
+                const videoName = 'inputVideo.mp4'; // Temporary name for FFmpeg
+                const audioName = 'inputAudio.mp3'; // Temporary name for FFmpeg
+                const outputName = `${this.fileName ? this.fileName.innerHTML.trim() : document.title}_merged.mp4`;
+
+                ffmpeg.FS('writeFile', videoName, await fetchFile(videoFile));
+                ffmpeg.FS('writeFile', audioName, await fetchFile(audioFile));
+
+                // Run FFmpeg command: -i videoFile -i audioFile -c:v copy -c:a aac output.mp4
+                await ffmpeg.run('-i', videoName, '-i', audioName, '-c:v', 'copy', '-c:a', 'aac', outputName);
+
+                this.tips.innerHTML = this.i18n("mergeComplete", "合并完成, 准备下载...");
+
+                const data = ffmpeg.FS('readFile', outputName);
+
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+                a.download = outputName;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                a.remove();
+
+                // Clean up files from FFmpeg's virtual file system
+                ffmpeg.FS('unlink', videoName);
+                ffmpeg.FS('unlink', audioName);
+                ffmpeg.FS('unlink', outputName);
+
+                this.tips.innerHTML = this.i18n("downloadCompleted", "下载完毕...");
+            } catch (error) {
+                console.error("Error during merge and download:", error);
+                this.tips.innerHTML = this.i18n("mergeFailed", "合并失败, 请查看控制台");
+                alert(this.i18n("mergeFailed", "合并失败: ") + error);
+                // Fallback to downloading separate files if merge fails
+                this.downloadDirect();
+            }
         }
         /**
          * 直接下载捕获的数据

@@ -934,5 +934,20 @@
   },
   "alwaysSearch": {
     "message": "始终打开深度搜索"
+  },
+  "mergeVideoAudio": {
+    "message": "合并音视频"
+  },
+  "mergingInProgress": {
+    "message": "合并中，请稍候..."
+  },
+  "ffmpegLoaded": {
+    "message": "FFmpeg 已加载, 开始合并..."
+  },
+  "mergeComplete": {
+    "message": "合并完成, 准备下载..."
+  },
+  "mergeFailed": {
+    "message": "合并失败, 请查看控制台"
   }
 }

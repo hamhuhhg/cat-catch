@@ -934,5 +934,20 @@
   },
   "alwaysSearch": {
     "message": "Always enable deep search"
+  },
+  "mergeVideoAudio": {
+    "message": "Merge Video & Audio"
+  },
+  "mergingInProgress": {
+    "message": "Merging in progress, please wait..."
+  },
+  "ffmpegLoaded": {
+    "message": "FFmpeg loaded, starting merge..."
+  },
+  "mergeComplete": {
+    "message": "Merge complete, preparing download..."
+  },
+  "mergeFailed": {
+    "message": "Merge failed, see console for details"
   }
 }

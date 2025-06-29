@@ -786,6 +786,7 @@ const interval = setInterval(function () {
     // 获取模拟手机 自动下载 捕获 状态
     updateButton();
     updateAutoCaptureButtonText(); // Add this call
+    initPopupMergeVideoAudioCheckbox(); // Initialize and set listener for the new checkbox
 
     // 上一次设定的倍数
     $("#playbackRate").val(G.playbackRate);
@@ -1040,4 +1041,22 @@ function updateAutoCaptureButtonText() {
     } else {
         $("#autoCaptureToggle").html(i18n.autoCapturePopupEnable);
     }
+}
+
+function initPopupMergeVideoAudioCheckbox() {
+    const $checkbox = $("#popupMergeVideoAudio");
+    const storageKey = "CatCatchCatch_mergeVideoAudio"; // Same key as in catch.js
+
+    // Initialize checkbox state from localStorage
+    const storedValue = localStorage.getItem(storageKey);
+    $checkbox.prop("checked", storedValue === "checked");
+
+    // Listen for changes and update localStorage
+    $checkbox.on('change', function() {
+        localStorage.setItem(storageKey, this.checked ? "checked" : "");
+        // Optionally, notify catch.js if it needs to react immediately.
+        // However, catch.js reads this from localStorage upon download,
+        // so direct notification might not be strictly necessary unless
+        // the UI in catch.js itself needs to update instantly.
+    });
 }
