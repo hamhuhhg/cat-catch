@@ -1,11 +1,12 @@
 (function () {
     class CatCatcher {
         constructor() {
+            console.log("[CatCatch.js] Constructor started.");
             this.settings = { watchedOnCaptureComplete: true, watchedOnTabClose: false, watchedOnNextVideo: false }; // Defaults, will be updated
             this.tabId = null;
             this.boundMessageHandler = this.handleBackgroundMessage.bind(this);
 
-            console.log("catch.js Start");
+            // console.log("catch.js Start"); // Original log, can be kept or removed
 
             // 初始化属性
             this.enable = true;  // 捕获开关
@@ -38,9 +39,11 @@
 
             // 创建和设置UI
             this.createUI();
+            console.log("[CatCatch.js] createUI() called.");
 
             // 代理MediaSource方法
             this.proxyMediaSourceMethods();
+            console.log("[CatCatch.js] proxyMediaSourceMethods() called.");
 
             this.getSettingsAndTabId();
             window.addEventListener("message", this.boundMessageHandler);
@@ -626,11 +629,14 @@
          * 核心函数 代理MediaSource方法
          */
         proxyMediaSourceMethods() {
+            console.log("[CatCatch.js] proxyMediaSourceMethods: Setting up MediaSource proxies.");
             // 代理 addSourceBuffer 方法
             window.MediaSource.prototype.addSourceBuffer = new Proxy(window.MediaSource.prototype.addSourceBuffer, {
                 apply: (target, thisArg, argumentsList) => {
+                    console.log("[CatCatch.js] MediaSource.addSourceBuffer proxy: APPLY called. Args:", argumentsList);
                     try {
                         const result = Reflect.apply(target, thisArg, argumentsList);
+                        console.log("[CatCatch.js] MediaSource.addSourceBuffer proxy: Original method called. Result:", result);
 
                         // 标题获取
                         setTimeout(() => { this.getFileName(); }, 2000);
