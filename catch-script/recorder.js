@@ -190,13 +190,16 @@
             recorder = new MediaRecorder(stream, option);
             recorder.ondataavailable = function (event) {
                 if (CatCatch.querySelector("#ffmpeg").checked) {
-                    window.postMessage({
+                    const messagePayload = {
                         action: "catCatchFFmpeg",
                         use: "transcode",
                         files: [{ data: URL.createObjectURL(event.data), type: option.mimeType }],
                         title: document.title.trim()
-                    });
-                    $tips.innerHTML = i18n("clickToStartRecording", "请点击开始录制");
+                    };
+                    console.log("[CatCatch] recorder.js: Sending 'catCatchFFmpeg' (transcode) message to content script. Payload:", JSON.parse(JSON.stringify(messagePayload)));
+                    window.postMessage(messagePayload);
+                    $tips.innerHTML = i18n("clickToStartRecording", "请点击开始录制"); // This message might be premature, as processing hasn't finished.
+                                                                                // Consider changing to "Sent to FFmpeg for processing..."
                     return;
                 }
                 const a = document.createElement('a');

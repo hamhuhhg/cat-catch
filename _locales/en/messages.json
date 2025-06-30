@@ -934,5 +934,27 @@
   },
   "alwaysSearch": {
     "message": "Always enable deep search"
+  },
+  "separateMediaDownloaded": {
+    "message": "$PART_TYPE$ part downloaded. If other parts (e.g., video/audio) are also being downloaded, they will be saved separately. To combine them, please use a tool like FFmpeg. Example command: `$EXAMPLE_COMMAND$`",
+    "placeholders": {
+      "part_type": {
+        "content": "$1",
+        "example": "Audio"
+      },
+      "example_command": {
+        "content": "$2",
+        "example": "ffmpeg -i video.mp4 -i audio.m4a -c copy output_merged.mp4"
+      }
+    }
+  },
+  "mp4boxMerge": {
+    "message": "Use MP4Box for merging"
+  },
+  "selectOnlyOneMerger": {
+    "message": "Please select either FFmpeg or MP4Box for merging, not both. Defaulting to no special merging."
+  },
+  "mp4boxNotImplemented": {
+    "message": "MP4Box merging is selected, but the MP4Box library (mp4box.all.js) is missing or this functionality is not fully implemented yet. Performing a direct download instead."
   }
 }

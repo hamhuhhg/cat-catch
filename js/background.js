@@ -407,7 +407,13 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
                     settings: settingsForClient,
                     tabId: sender.tab.id
                 }
+            }, function(response) {
+                // Optional: handle response from content script if needed
+                // console.log("Response from content script after sending settings:", response);
             });
+            sendResponse({status: "settings_sent_to_tab"});
+        } else {
+            sendResponse({status: "error", message: "No sender tab ID for getCaptureSettings"});
         }
         return true;
     }
@@ -432,12 +438,15 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
             }, response => {
                 if (chrome.runtime.lastError) {
                     // console.warn(`CatCatch: Error sending 'triggerDownloadFromCache' to tab ${videoData.tabId} from saveCapturedVideo handler: ${chrome.runtime.lastError.message}`);
+                    // No sendResponse here as the main path already sent it.
                 } else {
                     // console.log(`CatCatch: 'triggerDownloadFromCache' command sent to tab ${videoData.tabId}. Response:`, response);
                 }
             });
+            sendResponse({status: "trigger_download_sent_to_tab"});
         } else {
             console.warn("CatCatch: Invalid or incomplete videoData for 'saveCapturedVideo' message. Expected tabId and filename. Received:", videoData);
+            sendResponse({status: "error", message: "Invalid videoData for saveCapturedVideo"});
         }
         return true;
     }
@@ -688,66 +697,360 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         sendResponse("ok");
         return true;
     }
-    // Handle autoCaptureEnabled change
-    if (changes.autoCaptureEnabled !== undefined) {
-        G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
-        // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
-        const catchScript = G.scriptList.get("catch.js");
-        if (!catchScript) {
-            console.error("CatCatch: catch.js script info not found for storage change handling.");
-            return true; // Return true for async handling
-        }
+    // // Handle autoCaptureEnabled change -- THIS BLOCK IS MOVED TO chrome.storage.onChanged (see around line 893)
+    // if (changes.autoCaptureEnabled !== undefined) {
+    //     G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
+    //     // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
+    //     const catchScript = G.scriptList.get("catch.js");
+    //     if (!catchScript) {
+    //         console.error("CatCatch: catch.js script info not found for storage change handling.");
+    //         return true; // Return true for async handling
+    //     }
 
-        if (G.autoCaptureEnabled) {
-            // Auto capture just turned ON. Iterate all tabs and apply logic.
-            chrome.tabs.query({}, function(tabs) {
-                if (chrome.runtime.lastError) {
-                    console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
-                    return;
-                }
-                for (const tab of tabs) {
-                    if (tab.id && tab.url) { // Ensure tab.url is present
-                        manageAutoCaptureForTab(tab.id, tab.url);
-                    }
-                }
-            });
-        } else {
-            // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
-            const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
-            activeTabsCopy.forEach(tabIdToDisable => {
-                // No need to check other conditions like blocklist here. If auto is off, it's off.
-                catchScript.tabId.delete(tabIdToDisable);
-                removeCatchScript(tabIdToDisable, catchScript);
-            });
-        }
-    }
+    //     if (G.autoCaptureEnabled) {
+    //         // Auto capture just turned ON. Iterate all tabs and apply logic.
+    //         chrome.tabs.query({}, function(tabs) {
+    //             if (chrome.runtime.lastError) {
+    //                 console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
+    //                 return;
+    //             }
+    //             for (const tab of tabs) {
+    //                 if (tab.id && tab.url) { // Ensure tab.url is present
+    //                     manageAutoCaptureForTab(tab.id, tab.url);
+    //                 }
+    //             }
+    //         });
+    //     } else {
+    //         // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+    //         const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+    //         activeTabsCopy.forEach(tabIdToDisable => {
+    //             // No need to check other conditions like blocklist here. If auto is off, it's off.
+    //             catchScript.tabId.delete(tabIdToDisable);
+    //             removeCatchScript(tabIdToDisable, catchScript);
+    //         });
+    //     }
+    // }
     // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
-        const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
-        chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, function (tabs) {
-            if (chrome.runtime.lastError || !tabs.length) {
-                chrome.tabs.create({ url: G.ffmpegConfig.url, active: Message.active ?? true }, function (tab) {
-                    if (chrome.runtime.lastError) { return; }
-                    G.ffmpegConfig.tab = tab.id;
-                    G.ffmpegConfig.cacheData.push(data);
-                });
+        console.log("[CatCatch] BG: Received 'catCatchFFmpeg' message.", JSON.parse(JSON.stringify(Message)));
+        console.log("[CatCatch] BG: Current G.ffmpegConfig:", JSON.parse(JSON.stringify(G.ffmpegConfig)));
+
+        if (!G.ffmpegConfig.url || G.ffmpegConfig.url.trim() === "") {
+            console.error("[CatCatch] BG: FFmpeg helper URL (G.ffmpegConfig.url) is not configured. Aborting FFmpeg operation.");
+            sendResponse("error_ffmpeg_url_not_configured");
+            return true;
+        }
+
+        // === BEGIN NEW LOGIC FOR INTERNAL ffmpeg-merger.html ===
+        // Check if this is a 'catchMerge' action for exactly two captured blob files
+        if (Message.action === "catchMerge" &&
+            Message.files &&
+            Message.files.length === 2 &&
+            Message.files.every(f => f.data && typeof f.data === 'string' && f.data.startsWith("blob:"))) {
+
+            console.log("[CatCatch] BG: Detected 'catchMerge' for 2 captured blobs. Routing to internal ffmpeg-merger.html");
+            const ffmpegMergerUrl = chrome.runtime.getURL('ffmpeg-merger.html');
+
+            // Prepare filesData for ffmpeg-merger-logic.js
+            // It expects [{url: blobUrl, name: 'input_video.ext', type: 'video'}, {url: blobUrl, name: 'input_audio.ext', type: 'audio'}]
+            // We need to make assumptions or get better type info from catch.js if possible.
+            // For now, assume first is video-like, second is audio-like, or use generic names.
+            const filesForMerger = Message.files.map((file, index) => {
+                let defaultExt = 'mp4';
+                if (file.type) {
+                    const subtype = file.type.split('/')[1];
+                    if (subtype) defaultExt = subtype.split('+')[0]; // Handles things like 'video/mp4+somecodec'
+                }
+                return {
+                    url: file.data,
+                    name: `input_${index === 0 ? 'video' : 'audio'}.${defaultExt}`, // e.g., input_video.mp4, input_audio.m4a
+                    type: file.type || (index === 0 ? 'video/mp4' : 'audio/mp4') // Pass original type or a default
+                };
+            });
+
+            const dataForLocalMerger = {
+                command: 'processCapturedMedia',
+                filesData: filesForMerger,
+                outputFilename: (Message.title || 'merged_capture') + '.mp4'
+            };
+
+            chrome.tabs.create({ url: ffmpegMergerUrl, active: true }, (newTab) => {
+                if (chrome.runtime.lastError || !newTab) {
+                    console.error('[CatCatch] BG: Error creating ffmpeg-merger.html tab:', chrome.runtime.lastError?.message);
+                    sendResponse({status: "error", detail: "Failed to create internal merger tab"});
+                    return;
+                }
+                const tabUpdateListener = (tabId, changeInfo, tab) => {
+                    if (tabId === newTab.id && changeInfo.status === 'complete') {
+                        chrome.tabs.onUpdated.removeListener(tabUpdateListener);
+                        console.log(`[CatCatch] BG: ffmpeg-merger.html tab ${newTab.id} loaded. Sending data:`, JSON.parse(JSON.stringify(dataForLocalMerger)));
+                        chrome.tabs.sendMessage(newTab.id, dataForLocalMerger, (response) => {
+                            if (chrome.runtime.lastError) {
+                                console.error('[CatCatch] BG: Error sending message to ffmpeg-merger.html:', chrome.runtime.lastError.message);
+                            } else {
+                                console.log('[CatCatch] BG: Response from ffmpeg-merger.html:', response);
+                            }
+                        });
+                    }
+                };
+                chrome.tabs.onUpdated.addListener(tabUpdateListener);
+            });
+            sendResponse({status: "ok_internal_ffmpeg_initiated"});
+            return true; // IMPORTANT: End processing here if routed to internal merger
+        }
+        // === END NEW LOGIC FOR INTERNAL ffmpeg-merger.html ===
+
+        // If not routed internally, continue with existing logic for external G.ffmpegConfig.url
+        let sourceType = 'm3u8'; // Default to m3u8
+        let filesPayload = Message.files; // Default to passing original files
+
+        // Determine sourceType and potentially re-structure 'files' for captures
+        if (Message.action === "catchMerge" || (Message.action === "transcode" && Message.files && Message.files.some(f => f.data && typeof f.data === 'string' && f.data.startsWith("blob:")))) {
+            sourceType = 'capture';
+            // For captures, Message.files is already an array like [{data: "blob:...", type: "..."}, ...]
+            // The working version implied the helper page expects the blob URL in the 'data' property.
+            filesPayload = Message.files.map((file, index) => ({
+                data: file.data, // Use 'data' to hold the blob URL string
+                type: file.type || 'application/octet-stream',
+                name: file.name || `${Message.title || 'capture'}_part${index + 1}` // Keep 'name' for clarity
+            }));
+            if (filesPayload.length === 0) {
+                console.error("[CatCatch] BG: No valid blob URLs found in files from capture script for FFmpeg. Original Message.files:", JSON.parse(JSON.stringify(Message.files)));
+                sendResponse("error_no_valid_capture_files_for_ffmpeg");
                 return true;
             }
-            if (tabs[0].status == "complete") {
-                chrome.tabs.sendMessage(tabs[0].id, data);
+        } else if (Message.files && Message.files.length > 0 && Message.files[0].name && Message.files[0].name.startsWith("memory")) {
+            // This is likely from m3u8.js, sending M3U8 stream content (not an M3U8 URL)
+            // The payload structure for m3u8 content might be specific.
+            // For m3u8.js, Message.files is like: [{ data: URL.createObjectURL(fileBlob), name: "memory..." }]
+            // The FFmpeg page needs to know that 'data' here is a URL to the M3U8 stream content.
+            // Let's ensure it's also structured with a 'url' field for consistency if possible,
+            // or rely on the FFmpeg page to handle this specific 'memory' name convention.
+            // For now, we'll pass it as is, assuming helper page understands it, but mark sourceType.
+            sourceType = 'm3u8_content';
+            filesPayload = Message.files; // Pass as is.
+        } else if (Message.url && Message.url.toLowerCase().includes('.m3u8')) {
+            // If the original message had a primary URL that is an M3U8.
+            sourceType = 'm3u8_url';
+            // If Message.files is not already populated from m3u8.js, construct it.
+            // This case might not be hit if m3u8.js always populates Message.files.
+            if (!Message.files || Message.files.length === 0) {
+                 filesPayload = [{
+                    url: Message.url, // The M3U8 URL
+                    type: 'application/vnd.apple.mpegurl',
+                    name: Message.title || `stream_${Date.now()}.m3u8`
+                }];
+            }
+        }
+
+
+        const dataToHelper = {
+            Message: "ffmpeg", // Standard command for the helper page
+            action: Message.action,
+            files: filesPayload, // Standardized 'files' structure for captures, or original for M3U8s
+            sourceType: sourceType, // 'capture', 'm3u8_content', 'm3u8_url'
+            title: Message.title || `media_${Date.now()}`,
+            output: Message.output || Message.title || `output_${Date.now()}`, // FFmpeg helper page might use this for output filename
+            quantity: Message.quantity || (Array.isArray(filesPayload) ? filesPayload.length : 1),
+            tabId: Message.tabId ?? sender.tab.id,
+            version: G.ffmpegConfig.version
+            // Removed originalMessage to keep payload cleaner unless specifically needed by helper.
+        };
+
+        console.log("[CatCatch] BG: Prepared data for FFmpeg helper page:", JSON.parse(JSON.stringify(dataToHelper)));
+
+        chrome.tabs.query({ url: G.ffmpegConfig.url + "*" }, function (tabs) {
+            if (chrome.runtime.lastError) {
+                console.error("[CatCatch] BG: Error querying for FFmpeg tab:", chrome.runtime.lastError.message);
+                sendResponse("error_query_ffmpeg_tab");
+                return;
+            }
+
+            if (!tabs.length) {
+                console.log("[CatCatch] BG: No existing FFmpeg tab found. Creating new tab for:", G.ffmpegConfig.url);
+                chrome.tabs.create({ url: G.ffmpegConfig.url, active: dataToHelper.active ?? true }, function (tab) {
+                    if (chrome.runtime.lastError) {
+                        console.error("[CatCatch] BG: Error creating FFmpeg tab:", chrome.runtime.lastError.message);
+                        sendResponse("error_create_ffmpeg_tab");
+                        return;
+                    }
+                    if (tab) { // Ensure tab is created
+                        console.log("[CatCatch] BG: FFmpeg tab created. ID:", tab.id, "Status:", tab.status);
+                        G.ffmpegConfig.tab = tab.id;
+                        G.ffmpegConfig.cacheData.push(dataToHelper); // Cache the modified dataToHelper
+                        console.log("[CatCatch] BG: Data cached for FFmpeg tab. Cache size:", G.ffmpegConfig.cacheData.length);
+                    } else {
+                        console.error("[CatCatch] BG: Failed to create FFmpeg tab, tab object is null.");
+                        sendResponse("error_create_ffmpeg_tab_null");
+                    }
+                });
             } else {
-                G.ffmpegConfig.tab = tabs[0].id;
-                G.ffmpegConfig.cacheData.push(data);
+                console.log("[CatCatch] BG: Existing FFmpeg tab found. ID:", tabs[0].id, "Status:", tabs[0].status);
+                if (tabs[0].status == "complete") {
+                    console.log("[CatCatch] BG: FFmpeg tab is complete. Sending message to tabId:", tabs[0].id);
+                    chrome.tabs.sendMessage(tabs[0].id, dataToHelper, function(response) { // Send dataToHelper
+                        if (chrome.runtime.lastError) {
+                            console.error("[CatCatch] BG: Error sending message to existing FFmpeg tab:", chrome.runtime.lastError.message, "Data:", JSON.parse(JSON.stringify(dataToHelper)));
+                        } else {
+                            console.log("[CatCatch] BG: Response from FFmpeg tab:", response);
+                        }
+                    });
+                } else {
+                    console.log("[CatCatch] BG: FFmpeg tab not complete. Caching data. Tab ID:", tabs[0].id);
+                    G.ffmpegConfig.tab = tabs[0].id;
+                    G.ffmpegConfig.cacheData.push(dataToHelper); // Cache the modified dataToHelper
+                    console.log("[CatCatch] BG: Data cached for FFmpeg tab. Cache size:", G.ffmpegConfig.cacheData.length);
+                }
             }
         });
-        sendResponse("ok");
+        sendResponse("ok_bg_processed");
         return true;
     }
+
+    // Handle completion or failure of FFmpeg processing from ffmpeg-merger.html
+    if (Message.command === 'ffmpegMergeComplete') {
+        console.log('[CatCatch] BG: Received ffmpegMergeComplete from merger page.', Message);
+        if (Message.mergedBlob && Message.outputFilename) {
+            const blobUrl = Message.blobUrl || URL.createObjectURL(Message.mergedBlob); // Use provided blobUrl or create new
+            console.log('[CatCatch] BG: Initiating download for merged file:', Message.outputFilename);
+            chrome.downloads.download({
+                url: blobUrl,
+                filename: Message.outputFilename,
+                saveAs: G.saveAs // Use global saveAs setting, or could pass this preference through
+            }, (downloadId) => {
+                if (chrome.runtime.lastError) {
+                    console.error('[CatCatch] BG: Download initiation failed:', chrome.runtime.lastError.message);
+                } else {
+                    console.log('[CatCatch] BG: Download initiated with ID:', downloadId);
+                }
+                // It's important to revoke object URLs, but only if background created it AND it's not the one from merger page that merger page might still need
+                // If merger page sent the blobUrl, it should revoke it after it knows background is done.
+                // For simplicity, if we created it here from a raw Blob, we revoke.
+                // If merger page sent blobUrl, it should handle its own revocation or tell us it's safe to.
+                // For now, assuming if blobUrl was passed, merger created it and might revoke. If mergedBlob was passed, we created blobUrl.
+                if (Message.mergedBlob && blobUrl.startsWith("blob:")) { // only revoke if we created it from a raw blob here
+                    // URL.revokeObjectURL(blobUrl); // Let's defer this or ensure merger page handles its own if it sent the URL
+                }
+                // Close the ffmpeg-merger.html tab
+                if (sender.tab && sender.tab.id) {
+                    chrome.tabs.remove(sender.tab.id, () => {
+                        if (chrome.runtime.lastError) {
+                            console.warn("[CatCatch] BG: Could not close ffmpeg-merger tab:", sender.tab.id, chrome.runtime.lastError.message);
+                        } else {
+                            console.log("[CatCatch] BG: Closed ffmpeg-merger tab:", sender.tab.id);
+                        }
+                    });
+                }
+            });
+            sendResponse({ status: "downloadInitiated" });
+        } else {
+            console.error('[CatCatch] BG: ffmpegMergeComplete message missing mergedBlob or outputFilename.');
+            sendResponse({ status: "error", detail: "Missing data in ffmpegMergeComplete" });
+        }
+        return true; // Keep channel open if downloads.download callback is async for sendResponse
+    }
+
+    if (Message.command === 'ffmpegMergeFailed') {
+        console.error('[CatCatch] BG: Received ffmpegMergeFailed from merger page.', Message);
+        // Optionally notify the user or log more permanently
+        if (sender.tab && sender.tab.id) {
+            chrome.tabs.remove(sender.tab.id, () => { // Close the merger tab on failure too
+                if (chrome.runtime.lastError) { /* Be silent on error */ }
+            });
+        }
+        sendResponse({ status: "failure_acknowledged" });
+        return true;
+    }
+
     // 发送数据到本地
     if (Message.Message == "send2local" && G.send2local) {
         try { send2local(Message.action, Message.data, Message.tabId); } catch (e) { console.log(e); }
         sendResponse("ok");
         return true;
+    }
+    // The following block was mistakenly placed here and caused 'changes is not defined' error.
+    // It's being moved to a new chrome.storage.onChanged listener.
+    // // Handle autoCaptureEnabled change
+    // if (changes.autoCaptureEnabled !== undefined) {
+    //     G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
+    //     // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
+    //     const catchScript = G.scriptList.get("catch.js");
+    //     if (!catchScript) {
+    //         console.error("CatCatch: catch.js script info not found for storage change handling.");
+    //         return true; // Return true for async handling
+    //     }
+
+    //     if (G.autoCaptureEnabled) {
+    //         // Auto capture just turned ON. Iterate all tabs and apply logic.
+    //         chrome.tabs.query({}, function(tabs) {
+    //             if (chrome.runtime.lastError) {
+    //                 console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
+    //                 return;
+    //             }
+    //             for (const tab of tabs) {
+    //                 if (tab.id && tab.url) { // Ensure tab.url is present
+    //                     manageAutoCaptureForTab(tab.id, tab.url);
+    //                 }
+    //             }
+    //         });
+    //     } else {
+    //         // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+    //         const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+    //         activeTabsCopy.forEach(tabIdToDisable => {
+    //             // No need to check other conditions like blocklist here. If auto is off, it's off.
+    //             catchScript.tabId.delete(tabIdToDisable);
+    //             removeCatchScript(tabIdToDisable, catchScript);
+    //         });
+    //     }
+    // }
+});
+
+// Listener for storage changes
+chrome.storage.onChanged.addListener(function(changes, namespace) {
+    if (chrome.runtime.lastError) {
+        console.error("CatCatch: Error in storage.onChanged listener:", chrome.runtime.lastError.message);
+        return;
+    }
+
+    for (let [key, { oldValue, newValue }] of Object.entries(changes)) {
+        // console.log(
+        //     `Storage key "${key}" in namespace "${namespace}" changed.`,
+        //     `Old value was "${JSON.stringify(oldValue)}", new value is "${JSON.stringify(newValue)}".`
+        // );
+
+        if (key === "autoCaptureEnabled") {
+            console.log("[CatCatch] BG: autoCaptureEnabled changed in storage to", newValue);
+            G.autoCaptureEnabled = newValue; // Update global G
+            const catchScript = G.scriptList.get("catch.js");
+            if (!catchScript) {
+                console.error("CatCatch: catch.js script info not found for storage change handling (autoCaptureEnabled).");
+                return;
+            }
+
+            if (G.autoCaptureEnabled) {
+                // Auto capture just turned ON. Iterate all tabs and apply logic.
+                chrome.tabs.query({}, function(tabs) {
+                    if (chrome.runtime.lastError) {
+                        console.error("CatCatch: Error querying tabs for autoCaptureEnabled ON:", chrome.runtime.lastError.message);
+                        return;
+                    }
+                    for (const tab of tabs) {
+                        if (tab.id && tab.url) { // Ensure tab.url is present
+                            manageAutoCaptureForTab(tab.id, tab.url);
+                        }
+                    }
+                });
+            } else {
+                // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+                const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+                activeTabsCopy.forEach(tabIdToDisable => {
+                    catchScript.tabId.delete(tabIdToDisable);
+                    removeCatchScript(tabIdToDisable, catchScript);
+                });
+                console.log("[CatCatch] BG: autoCaptureEnabled turned OFF. Removed catch.js from tabs:", Array.from(activeTabsCopy));
+            }
+        }
+        // Add other storage change handlers here if needed
     }
 });
 
@@ -957,14 +1260,31 @@ chrome.commands.onCommand.addListener(function (command) {
  * 如果是在线ffmpeg 则发送数据
  */
 chrome.webNavigation.onCompleted.addListener(function (details) {
-    if (G.ffmpegConfig.tab && details.tabId == G.ffmpegConfig.tab) {
-        setTimeout(() => {
-            G.ffmpegConfig.cacheData.forEach(data => {
-                chrome.tabs.sendMessage(details.tabId, data);
-            });
-            G.ffmpegConfig.cacheData = [];
-            G.ffmpegConfig.tab = 0;
-        }, 500);
+    if (G.ffmpegConfig.tab && details.tabId == G.ffmpegConfig.tab && details.frameId === 0) { // Ensure it's the main frame
+        console.log("[CatCatch] BG: FFmpeg helper page onCompleted. Tab ID:", details.tabId, "URL:", details.url);
+        // Check if the loaded URL matches the configured FFmpeg URL to avoid sending data to intermediate pages if redirects occur.
+        if (details.url.startsWith(G.ffmpegConfig.url)) {
+            console.log("[CatCatch] BG: FFmpeg helper page URL matches G.ffmpegConfig.url. Processing cache. Cache size:", G.ffmpegConfig.cacheData.length);
+            setTimeout(() => {
+                G.ffmpegConfig.cacheData.forEach(data => {
+                    console.log("[CatCatch] BG: Sending cached data to FFmpeg tab:", details.tabId, JSON.parse(JSON.stringify(data)));
+                    chrome.tabs.sendMessage(details.tabId, data, function(response) {
+                        if (chrome.runtime.lastError) {
+                            console.error("[CatCatch] BG: Error sending cached message to FFmpeg tab:", chrome.runtime.lastError.message);
+                        } else {
+                            console.log("[CatCatch] BG: Response from FFmpeg tab for cached data:", response);
+                        }
+                    });
+                });
+                G.ffmpegConfig.cacheData = [];
+                // G.ffmpegConfig.tab = 0; // Consider keeping G.ffmpegConfig.tab if the tab is meant to be reused. Clearing it means a new tab might be created next time.
+                                         // For now, let's keep the original logic of clearing it.
+                G.ffmpegConfig.tab = 0;
+                console.log("[CatCatch] BG: FFmpeg data cache processed and cleared. G.ffmpegConfig.tab reset.");
+            }, 500); // Delay to allow scripts on the helper page to load
+        } else {
+            console.warn("[CatCatch] BG: FFmpeg helper page loaded a URL that does not match G.ffmpegConfig.url. URL:", details.url, "Config URL:", G.ffmpegConfig.url, "Cache not processed for this load.");
+        }
     }
 });
 

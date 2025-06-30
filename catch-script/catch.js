@@ -178,7 +178,8 @@
                 <button id="clean" ${buttonStyle} data-i18n="deleteCapturedData">删除已捕获数据</button>
                 <div><button id="hide" ${buttonStyle} data-i18n="hide">隐藏</button><button id="close" ${buttonStyle} data-i18n="close">关闭</button></div>
                 <label><input type="checkbox" id="autoDown" ${localStorage.getItem("CatCatchCatch_autoDown") || ""} ${checkboxStyle}><span data-i18n="automaticDownload">完成捕获自动下载</span></label>
-                <label><input type="checkbox" id="ffmpeg" ${localStorage.getItem("CatCatchCatch_ffmpeg") || ""} ${checkboxStyle}><span data-i18n="ffmpeg">使用ffmpeg合并</span></label>
+                <label><input type="checkbox" id="ffmpeg" ${localStorage.getItem("CatCatchCatch_ffmpeg") || ""} ${checkboxStyle} class="mergeOption"><span data-i18n="ffmpeg">使用ffmpeg合并</span></label>
+                <label><input type="checkbox" id="mp4box" ${localStorage.getItem("CatCatchCatch_mp4box") || ""} ${checkboxStyle} class="mergeOption"><span data-i18n="mp4boxMerge">使用MP4Box合并</span></label>
                 <label><input type="checkbox" id="autoToBuffered" ${checkboxStyle}><span data-i18n="autoToBuffered">自动跳转缓冲尾</span></label>
                 <label><input type="checkbox" id="checkHead" ${checkboxStyle}>清理多余头部数据</label>
                 <label><input type="checkbox" id="completeClearCache" ${localStorage.getItem("CatCatchCatch_completeClearCache") || ""} ${checkboxStyle}>下载完成后清空数据</label>
@@ -321,6 +322,9 @@
             const ffmpeg = this.catCatch.querySelector("#ffmpeg");
             if (ffmpeg) ffmpeg.addEventListener('change', this.handleFfmpegChange.bind(this));
 
+            const mp4box = this.catCatch.querySelector("#mp4box");
+            if (mp4box) mp4box.addEventListener('change', this.handleMp4boxChange.bind(this));
+
             const restartAlways = this.catCatch.querySelector("#restartAlways");
             if (restartAlways) restartAlways.addEventListener('change', this.handleRestartAlwaysChange.bind(this));
 
@@ -433,6 +437,20 @@
 
         handleFfmpegChange(event) {
             localStorage.setItem("CatCatchCatch_ffmpeg", event.target.checked ? "checked" : "");
+            if (event.target.checked) {
+                const mp4boxCheckbox = this.catCatch.querySelector("#mp4box");
+                if (mp4boxCheckbox) mp4boxCheckbox.checked = false;
+                localStorage.setItem("CatCatchCatch_mp4box", "");
+            }
+        }
+
+        handleMp4boxChange(event) {
+            localStorage.setItem("CatCatchCatch_mp4box", event.target.checked ? "checked" : "");
+            if (event.target.checked) {
+                const ffmpegCheckbox = this.catCatch.querySelector("#ffmpeg");
+                if (ffmpegCheckbox) ffmpegCheckbox.checked = false;
+                localStorage.setItem("CatCatchCatch_ffmpeg", "");
+            }
         }
 
         handleRestartAlwaysChange(event) {
@@ -737,7 +755,16 @@
                 return;
             }
 
-            let downloadWithFFmpeg = this.catchMedia.length >= 2 && localStorage.getItem("CatCatchCatch_ffmpeg") == "checked";
+            const useFFmpeg = localStorage.getItem("CatCatchCatch_ffmpeg") === "checked";
+            const useMp4box = localStorage.getItem("CatCatchCatch_mp4box") === "checked";
+            let downloadWithFFmpeg = this.catchMedia.length >= 2 && useFFmpeg; // Only for multiple streams for now
+            let downloadWithMp4box = this.catchMedia.length > 0 && useMp4box; // Mp4box might handle single or multiple
+
+            if (useFFmpeg && useMp4box) { // Should not happen due to UI logic, but as a safeguard
+                alert(this.i18n("selectOnlyOneMerger", "Please select either FFmpeg or MP4Box for merging, not both. Defaulting to no special merging."));
+                downloadWithFFmpeg = false;
+                downloadWithMp4box = false;
+            }
 
             /**
              * 检查文件
@@ -791,7 +818,13 @@
                 }
             }
 
-            downloadWithFFmpeg ? this.downloadWithFFmpeg() : this.downloadDirect();
+            if (downloadWithFFmpeg) {
+                this.downloadWithFFmpeg();
+            } else if (downloadWithMp4box) {
+                this.downloadWithMp4box(); // New function to be created
+            } else {
+                this.downloadDirect();
+            }
 
             if (this.isComplete) {
                 if (localStorage.getItem("CatCatchCatch_completeClearCache") == "checked") { this.clearCache(); }
@@ -812,9 +845,11 @@
                 const mime = (item.mimeType && item.mimeType.split(';')[0]) || 'video/mp4';
                 const fileBlob = new Blob(item.bufferList, { type: mime });
                 const type = mime.split('/')[0] || 'video';
+                const blobUrl = URL.createObjectURL(fileBlob);
+                console.log("[CatCatch] catch.js: Created blob URL:", blobUrl, "for blob size:", fileBlob.size, "type:", fileBlob.type);
 
                 media.push({
-                    data: (typeof chrome == "object") ? URL.createObjectURL(fileBlob) : fileBlob,
+                    data: blobUrl, // Ensure the string URL is pushed
                     type: type
                 });
             }
@@ -825,16 +860,59 @@
             }
 
             const title = this.fileName ? this.fileName.innerHTML.trim() : document.title;
-
-            window.postMessage({
+            const messagePayload = {
                 action: "catCatchFFmpeg",
                 use: "catchMerge",
                 files: media,
                 title: title,
                 output: title,
                 quantity: media.length
-            });
+            };
+            console.log("[CatCatch] catch.js: Sending 'catCatchFFmpeg' (catchMerge) message to content script. Payload:", JSON.parse(JSON.stringify(messagePayload)));
+            window.postMessage(messagePayload);
         }
+
+        /**
+         * 使用MP4Box合并下载捕获的数据 (Placeholder)
+         */
+        downloadWithMp4box() {
+            console.log("[CatCatch] catch.js: downloadWithMp4box() called.");
+            alert(this.i18n("mp4boxNotImplemented", "MP4Box merging is selected, but the MP4Box library (mp4box.all.js) is missing or this functionality is not fully implemented yet. Performing a direct download instead."));
+            // TODO: Implement actual MP4Box merging logic here if/when the library is available and fixed.
+            // This would involve:
+            // 1. Checking if MP4Box object is available (from mp4box.all.js).
+            // 2. Creating an MP4Box file: const mp4file = MP4Box.createFile();
+            // 3. Adding tracks for each item in this.catchMedia:
+            //    for (let item of this.catchMedia) {
+            //        // Determine codec string, width, height, duration, etc. from item.mimeType or captured data
+            //        // This part is complex as MediaSource bufferList contains raw segments.
+            //        // MP4Box usually works with elementary streams or requires more info to create tracks.
+            //        // const trackOptions = { timescal: ..., width: ..., height: ..., hdlr: 'vide', ... };
+            //        // const trackId = mp4file.addTrack(trackOptions);
+            //        // For each buffer in item.bufferList:
+            //        //    mp4file.addSample(trackId, buffer, { duration: ..., is_sync: ... });
+            //    }
+            // 4. Saving the file:
+            //    const buffer = mp4file.getBuffer();
+            //    const blob = new Blob([buffer], { type: 'video/mp4' });
+            //    const a = document.createElement('a');
+            //    a.href = URL.createObjectURL(blob);
+            //    a.download = `${this.fileName ? this.fileName.innerHTML.trim() : document.title}.mp4`;
+            //    a.click();
+            //    URL.revokeObjectURL(a.href);
+            //    a.remove();
+
+            // Fallback to direct download for now
+            this.downloadDirect();
+
+            if (this.isComplete) {
+                if (localStorage.getItem("CatCatchCatch_completeClearCache") == "checked") { this.clearCache(); }
+                if (this.tips) {
+                    this.tips.innerHTML = this.i18n("downloadCompleted", "下载完毕...");
+                }
+            }
+        }
+
         /**
          * 直接下载捕获的数据
          */

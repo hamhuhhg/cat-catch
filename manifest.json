@@ -1,6 +1,6 @@
 {
   "background": {
-    "service_worker": "js/background.js"
+    "scripts": ["js/background.js"]
   },
   "action": {
     "default_icon": "img/icon.png",
@@ -80,8 +80,19 @@
       "matches": [
         "<all_urls>"
       ]
+    },
+    {
+      "resources": [
+        "lib/ffmpeg.wasm/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:; object-src 'self';"
+  },
   "default_locale": "en",
   "version": "2.6.3",
   "incognito": "split"
