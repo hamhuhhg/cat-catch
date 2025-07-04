@@ -17,7 +17,7 @@ if (!chrome.downloads) {
             a.href = options.url;
             a.download = options.filename;
             a.click();
-            delete a;
+            // delete a; // Removed: 'delete' on unqualified name is deprecated and not needed here.
             callback && callback();
         },
         onChanged: { addListener: function () { } },
@@ -345,25 +345,22 @@ async function InitOptionsAsync() {
 // have been moved to background.js to be attached after initial G setup.
 
 // For ES Module export:
-// Note: debounce, debounceCount, debounceTime are not truly global/static here if not exported and re-imported by background.
-// They are currently used by findMedia/save which are also planned to be part of background.js or imported by it.
-// For now, exporting them. If findMedia/save are moved to background.js, these might not need export.
+
+// All code, including console.log, must come BEFORE the export block.
+console.log("CatCatch: init.js - End of script, defining exports now.");
+
 export {
     G,
     InitOptionsAsync,
-    cacheData, // cacheData is modified by InitOptionsAsync and used by background.js
-    i18n,      // i18n proxy
-    // Utility regexes if needed by background.js directly, though likely used by functions within function.js
+    cacheData,
+    i18n,
     reFilename,
     reStringModify,
     reFilterFileName,
     reTemplates,
     reJSONparse,
-    wildcardToRegex, // This function is used by InitOptionsAsync and potentially storage.onChanged if that logic moves to background
-    // Debounce related vars - their management needs to be clear if background.js takes over findMedia/save
+    wildcardToRegex,
     debounce,
     debounceCount,
     debounceTime
 };
-
-console.log("CatCatch: init.js - End of script, exports defined.");

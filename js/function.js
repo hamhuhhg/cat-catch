@@ -103,9 +103,10 @@ function setRequestHeaders(data = {}, callback = undefined) {
         });
     });
 }
-// console.log("CatCatch: function.js - End of script"); // Removed for ES module, logging done in background.js
 
 // For ES Module export:
+// All functions are defined above this block.
+console.log("CatCatch: function.js - End of script, defining exports now.");
 export {
     appendZero,
     secToTime,
@@ -130,6 +131,7 @@ export {
     closeTab,
     openParser
 };
+// console.log("CatCatch: function.js - End of script"); // Removed for ES module, logging done in background.js
 
 /**
  * 指定标签页修改 urlFilter请求头

@@ -217,6 +217,16 @@ async function initializeBackground() {
         await InitOptionsAsync();
         console.log("CatCatch: background.js - InitOptionsAsync completed.");
         if (G && G.initSyncComplete && G.initLocalComplete) {
+            // Expose G and specific functions to globalThis for UI scripts
+            globalThis.G = G;
+            if (func && func.stringModify) { // Ensure func and stringModify are available
+                globalThis.stringModify = func.stringModify;
+            }
+            if (i18n) { // i18n is imported from init.js
+                globalThis.i18n = i18n; // Expose the i18n proxy if UI scripts were using it
+            }
+            console.log("CatCatch: background.js - G, stringModify, and i18n proxy exposed to globalThis.");
+
             attachListeners();
             console.log("CatCatch: background.js - All listeners attached.");
         } else {
