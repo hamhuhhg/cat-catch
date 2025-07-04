@@ -103,7 +103,33 @@ function setRequestHeaders(data = {}, callback = undefined) {
         });
     });
 }
-console.log("CatCatch: function.js - End of script");
+// console.log("CatCatch: function.js - End of script"); // Removed for ES module, logging done in background.js
+
+// For ES Module export:
+export {
+    appendZero,
+    secToTime,
+    byteToSize,
+    downloadDataURL,
+    isEmpty,
+    setRequestHeaders,
+    setHeaders,
+    awaitG,
+    splitString,
+    templatesFunction,
+    templates,
+    getUrlFileName,
+    JSONparse,
+    ArrayBufferToBlob,
+    clearRedundant,
+    stringModify,
+    filterFileName,
+    flattenObject,
+    send2local,
+    isLockUrl,
+    closeTab,
+    openParser
+};
 
 /**
  * 指定标签页修改 urlFilter请求头

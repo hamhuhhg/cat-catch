@@ -2,7 +2,8 @@
   "background": {
     "scripts": [
       "js/background.js"
-    ]
+    ],
+    "type": "module"
   },
   "action": {
     "default_icon": "img/icon.png",

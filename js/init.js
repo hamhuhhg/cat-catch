@@ -336,159 +336,34 @@ async function InitOptionsAsync() {
     console.log("CatCatch: init.js - InitOptionsAsync finished. Current G state:", JSON.parse(JSON.stringify(G))); // Log G state
 }
 
-// 初始变量
-// function InitOptions() { // Original function commented out or removed
-    // 断开重新连接后 立刻把local里MediaData数据交给cacheData
-    /*(chrome.storage.session ?? chrome.storage.local).get({ MediaData: {} }, function (items) {
-        if (items.MediaData.init) {
-            cacheData = {};
-            return;
-        }
-        cacheData = items.MediaData;
-    });
-    // 读取sync配置数据 交给全局变量G
-    chrome.storage.sync.get(G.OptionLists, function (items) {
-        if (chrome.runtime.lastError) {
-            items = G.OptionLists;
-        }
-        // 确保有默认值
-        for (let key in G.OptionLists) {
-            if (items[key] === undefined || items[key] === null) {
-                items[key] = G.OptionLists[key];
-            }
-        }
-        // Ext的Array转为Map类型
-        items.Ext = new Map(items.Ext.map(item => [item.ext, item]));
-        // Type的Array转为Map类型
-        items.Type = new Map(items.Type.map(item => [item.type, { size: item.size, state: item.state }]));
-        // 预编译正则匹配
-        items.Regex = items.Regex.map(item => {
-            let reg = undefined;
-            try { reg = new RegExp(item.regex, item.type) } catch (e) { item.state = false; }
-            return { regex: reg, ext: item.ext, blackList: item.blackList, state: item.state }
-        });
-        // 预编译屏蔽通配符
-        items.blockUrl = items.blockUrl.map(item => {
-            return { url: wildcardToRegex(item.url), state: item.state }
-        });
+// The InitOptions function previously here was refactored into InitOptionsAsync above.
+// Ensure all its logic is within InitOptionsAsync or other appropriate places.
+// The old InitOptions sync call is removed.
+// Global variable G and cacheData are defined above InitOptionsAsync.
 
-        // 兼容旧配置
-        if (items.copyM3U8.includes('$url$')) {
-            items.copyM3U8 = items.copyM3U8.replaceAll('$url$', '${url}').replaceAll('$referer$', '${referer}').replaceAll('$title$', '${title}');
-            chrome.storage.sync.set({ copyM3U8: items.copyM3U8 });
-        }
-        if (items.copyMPD.includes('$url$')) {
-            items.copyMPD = items.copyMPD.replaceAll('$url$', '${url}').replaceAll('$referer$', '${referer}').replaceAll('$title$', '${title}');
-            chrome.storage.sync.set({ copyMPD: items.copyMPD });
-        }
-        if (items.copyOther.includes('$url$')) {
-            items.copyOther = items.copyOther.replaceAll('$url$', '${url}').replaceAll('$referer$', '${referer}').replaceAll('$title$', '${title}');
-            chrome.storage.sync.set({ copyOther: items.copyOther });
-        }
-        if (typeof items.m3u8dl == 'boolean') {
-            items.m3u8dl = items.m3u8dl ? 1 : 0;
-            chrome.storage.sync.set({ m3u8dl: items.m3u8dl });
-        }
+// Listeners like chrome.storage.onChanged and chrome.runtime.onInstalled
+// have been moved to background.js to be attached after initial G setup.
 
-        // 侧边栏
-        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: items.sidePanel });
+// For ES Module export:
+// Note: debounce, debounceCount, debounceTime are not truly global/static here if not exported and re-imported by background.
+// They are currently used by findMedia/save which are also planned to be part of background.js or imported by it.
+// For now, exporting them. If findMedia/save are moved to background.js, these might not need export.
+export {
+    G,
+    InitOptionsAsync,
+    cacheData, // cacheData is modified by InitOptionsAsync and used by background.js
+    i18n,      // i18n proxy
+    // Utility regexes if needed by background.js directly, though likely used by functions within function.js
+    reFilename,
+    reStringModify,
+    reFilterFileName,
+    reTemplates,
+    reJSONparse,
+    wildcardToRegex, // This function is used by InitOptionsAsync and potentially storage.onChanged if that logic moves to background
+    // Debounce related vars - their management needs to be clear if background.js takes over findMedia/save
+    debounce,
+    debounceCount,
+    debounceTime
+};
 
-        G = { ...items, ...G };
-
-        // 初始化 G.blockUrlSet
-        (typeof isLockUrl == 'function') && chrome.tabs.query({}, function (tabs) {
-            for (const tab of tabs) {
-                if (tab.url && isLockUrl(tab.url)) {
-                    G.blockUrlSet.add(tab.id);
-                }
-            }
-        });
-
-        chrome.action.setIcon({ path: G.enable ? "/img/icon.png" : "/img/icon-disable.png" });
-        G.initSyncComplete = true;
-    });
-    // 读取local配置数据 交给全局变量G
-    (chrome.storage.session ?? chrome.storage.local).get(G.LocalVar, function (items) {
-        items.featMobileTabId = new Set(items.featMobileTabId);
-        items.featAutoDownTabId = new Set(items.featAutoDownTabId);
-        G = { ...items, ...G };
-        G.initLocalComplete = true;
-    });
-}
-// 监听变化，新值给全局变量
-chrome.storage.onChanged.addListener(function (changes, namespace) {
-    if (changes.MediaData) {
-        if (changes.MediaData.newValue?.init) { cacheData = {}; }
-        return;
-    }
-    for (let [key, { oldValue, newValue }] of Object.entries(changes)) {
-        newValue ??= G.OptionLists[key];
-        if (key == "Ext") {
-            G.Ext = new Map(newValue.map(item => [item.ext, item]));
-            continue;
-        }
-        if (key == "Type") {
-            G.Type = new Map(newValue.map(item => [item.type, { size: item.size, state: item.state }]));
-            continue;
-        }
-        if (key == "Regex") {
-            G.Regex = newValue.map(item => {
-                let reg = undefined;
-                try { reg = new RegExp(item.regex, item.type) } catch (e) { item.state = false; }
-                return { regex: reg, ext: item.ext, blackList: item.blackList, state: item.state }
-            });
-            continue;
-        }
-        if (key == "blockUrl") {
-            G.blockUrl = newValue.map(item => {
-                return { url: wildcardToRegex(item.url), state: item.state }
-            });
-            continue;
-        }
-        if (key == "featMobileTabId" || key == "featAutoDownTabId") {
-            G[key] = new Set(newValue);
-            continue;
-        }
-        if (key == "sidePanel" && !G.isFirefox) {
-            chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: newValue });
-            continue;
-        }
-        G[key] = newValue;
-    }
-});
-
-// 扩展升级，清空本地储存
-chrome.runtime.onInstalled.addListener(function (details) {
-    if (details.reason == "update") {
-        chrome.storage.local.clear(function () {
-            if (chrome.storage.session) {
-                chrome.storage.session.clear(InitOptions);
-            } else {
-                InitOptions();
-            }
-        });
-        chrome.alarms.create("nowClear", { when: Date.now() + 3000 });
-    }
-    if (details.reason == "install") {
-        chrome.tabs.create({ url: "install.html" });
-    }
-});
-
-/**
- * 将用户输入的URL（可能包含通配符）转换为正则表达式
- * @param {string} urlPattern - 用户输入的URL，可能包含通配符
- * @returns {RegExp} - 转换后的正则表达式
- */
-function wildcardToRegex(urlPattern) {
-    // 将通配符 * 转换为正则表达式的 .*
-    // 将通配符 ? 转换为正则表达式的 .
-    // 同时转义其他正则表达式特殊字符
-    const regexPattern = urlPattern
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // 转义正则表达式特殊字符
-        .replace(/\*/g, '.*') // 将 * 替换为 .*
-        .replace(/\?/g, '.'); // 将 ? 替换为 .
-
-    // 创建正则表达式，确保匹配整个URL
-    return new RegExp(`^${regexPattern}$`, 'i'); // 忽略大小写
-}
-console.log("CatCatch: init.js - End of script");
+console.log("CatCatch: init.js - End of script, exports defined.");
