@@ -221,12 +221,125 @@ let debounceCount = 0;
 let debounceTime = 0;
 
 // Init
-InitOptions();
+// InitOptions(); // Will be called from background.js after it's defined.
 
 // 初始变量
-function InitOptions() {
+async function InitOptionsAsync() {
+    console.log("CatCatch: init.js - InitOptionsAsync started");
     // 断开重新连接后 立刻把local里MediaData数据交给cacheData
-    (chrome.storage.session ?? chrome.storage.local).get({ MediaData: {} }, function (items) {
+    await new Promise(resolve => {
+        (chrome.storage.session ?? chrome.storage.local).get({ MediaData: {} }, function (items) {
+            if (items.MediaData.init) {
+                cacheData = {};
+            } else {
+                cacheData = items.MediaData;
+            }
+            console.log("CatCatch: init.js - Session MediaData loaded into cacheData.");
+            resolve();
+        });
+    });
+
+    await new Promise(resolve => {
+        chrome.storage.sync.get(G.OptionLists, function (items) {
+            if (chrome.runtime.lastError) {
+                console.warn("CatCatch: init.js - Error getting sync storage, using defaults:", chrome.runtime.lastError.message);
+                items = JSON.parse(JSON.stringify(G.OptionLists)); // Deep copy defaults
+            }
+            // 确保有默认值
+            for (let key in G.OptionLists) {
+                if (items[key] === undefined || items[key] === null) {
+                    items[key] = JSON.parse(JSON.stringify(G.OptionLists[key])); // Deep copy default for missing item
+                }
+            }
+            // Ext的Array转为Map类型
+            items.Ext = new Map(items.Ext.map(item => [item.ext, item]));
+            // Type的Array转为Map类型
+            items.Type = new Map(items.Type.map(item => [item.type, { size: item.size, state: item.state }]));
+            // 预编译正则匹配
+            items.Regex = items.Regex.map(item => {
+                let reg = undefined;
+                try { reg = new RegExp(item.regex, item.type) } catch (e) { item.state = false; console.error("CatCatch: Invalid regex", item, e); }
+                return { regex: reg, ext: item.ext, blackList: item.blackList, state: item.state }
+            });
+            // 预编译屏蔽通配符
+            items.blockUrl = items.blockUrl.map(item => {
+                return { url: wildcardToRegex(item.url), state: item.state }
+            });
+
+            // 兼容旧配置
+            if (items.copyM3U8.includes('$url$')) {
+                items.copyM3U8 = items.copyM3U8.replaceAll('$url$', '${url}').replaceAll('$referer$', '${referer}').replaceAll('$title$', '${title}');
+                chrome.storage.sync.set({ copyM3U8: items.copyM3U8 });
+            }
+            if (items.copyMPD.includes('$url$')) {
+                items.copyMPD = items.copyMPD.replaceAll('$url$', '${url}').replaceAll('$referer$', '${referer}').replaceAll('$title$', '${title}');
+                chrome.storage.sync.set({ copyMPD: items.copyMPD });
+            }
+            if (items.copyOther.includes('$url$')) {
+                items.copyOther = items.copyOther.replaceAll('$url$', '${url}').replaceAll('$referer$', '${referer}').replaceAll('$title$', '${title}');
+                chrome.storage.sync.set({ copyOther: items.copyOther });
+            }
+            if (typeof items.m3u8dl == 'boolean') {
+                items.m3u8dl = items.m3u8dl ? 1 : 0;
+                chrome.storage.sync.set({ m3u8dl: items.m3u8dl });
+            }
+
+            Object.assign(G, items); // Assign loaded sync items to G
+            G.initSyncComplete = true;
+            console.log("CatCatch: init.js - Sync options loaded into G.");
+            resolve();
+        });
+    });
+
+    await new Promise(resolve => {
+        (chrome.storage.session ?? chrome.storage.local).get(G.LocalVar, function (items) {
+             if (chrome.runtime.lastError) {
+                console.warn("CatCatch: init.js - Error getting local/session storage, using defaults:", chrome.runtime.lastError.message);
+                // Potentially reset items to defaults if critical, or ensure G.LocalVar defaults are robust
+            }
+            items.featMobileTabId = new Set(items.featMobileTabId);
+            items.featAutoDownTabId = new Set(items.featAutoDownTabId);
+            Object.assign(G, items); // Assign loaded local items to G
+            G.initLocalComplete = true;
+            console.log("CatCatch: init.js - Local options loaded into G.");
+            resolve();
+        });
+    });
+
+    // Initialize G.blockUrlSet after G.blockUrl is populated from sync storage
+    if (typeof isLockUrl == 'function' && G.blockUrl) {
+        await new Promise(resolve => { // Make this async if tabs.query is used
+            chrome.tabs.query({}, function (tabs) {
+                if (chrome.runtime.lastError) {
+                    console.warn("CatCatch: init.js - Error querying tabs for blockUrlSet init:", chrome.runtime.lastError.message);
+                } else {
+                    for (const tab of tabs) {
+                        if (tab.url && isLockUrl(tab.url)) { // isLockUrl uses G.blockUrl
+                            G.blockUrlSet.add(tab.id);
+                        }
+                    }
+                }
+                console.log("CatCatch: init.js - G.blockUrlSet initialized.");
+                resolve();
+            });
+        });
+    } else {
+        console.warn("CatCatch: init.js - G.blockUrl not ready for blockUrlSet init or isLockUrl not found.");
+    }
+
+    if (G.enable !== undefined) { // Check if G.enable is defined before using it
+        chrome.action.setIcon({ path: G.enable ? "/img/icon.png" : "/img/icon-disable.png" });
+    } else {
+        console.warn("CatCatch: init.js - G.enable is undefined at setIcon.");
+        chrome.action.setIcon({ path: "/img/icon.png" }); // Default icon
+    }
+    console.log("CatCatch: init.js - InitOptionsAsync finished. Current G state:", JSON.parse(JSON.stringify(G))); // Log G state
+}
+
+// 初始变量
+// function InitOptions() { // Original function commented out or removed
+    // 断开重新连接后 立刻把local里MediaData数据交给cacheData
+    /*(chrome.storage.session ?? chrome.storage.local).get({ MediaData: {} }, function (items) {
         if (items.MediaData.init) {
             cacheData = {};
             return;
@@ -378,3 +491,4 @@ function wildcardToRegex(urlPattern) {
     // 创建正则表达式，确保匹配整个URL
     return new RegExp(`^${regexPattern}$`, 'i'); // 忽略大小写
 }
+console.log("CatCatch: init.js - End of script");

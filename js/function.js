@@ -103,6 +103,7 @@ function setRequestHeaders(data = {}, callback = undefined) {
         });
     });
 }
+console.log("CatCatch: function.js - End of script");
 
 /**
  * 指定标签页修改 urlFilter请求头

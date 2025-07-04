@@ -688,6 +688,39 @@ chrome.runtime.onMessage.addListener(function (Message, sender, sendResponse) {
         sendResponse("ok");
         return true;
     }
+    // Handle autoCaptureEnabled change
+    if (changes.autoCaptureEnabled !== undefined) {
+        G.autoCaptureEnabled = changes.autoCaptureEnabled.newValue; // Update global G
+        // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
+        const catchScript = G.scriptList.get("catch.js");
+        if (!catchScript) {
+            console.error("CatCatch: catch.js script info not found for storage change handling.");
+            return true; // Return true for async handling
+        }
+
+        if (G.autoCaptureEnabled) {
+            // Auto capture just turned ON. Iterate all tabs and apply logic.
+            chrome.tabs.query({}, function(tabs) {
+                if (chrome.runtime.lastError) {
+                    console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
+                    return;
+                }
+                for (const tab of tabs) {
+                    if (tab.id && tab.url) { // Ensure tab.url is present
+                        manageAutoCaptureForTab(tab.id, tab.url);
+                    }
+                }
+            });
+        } else {
+            // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
+            const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
+            activeTabsCopy.forEach(tabIdToDisable => {
+                // No need to check other conditions like blocklist here. If auto is off, it's off.
+                catchScript.tabId.delete(tabIdToDisable);
+                removeCatchScript(tabIdToDisable, catchScript);
+            });
+        }
+    }
     // ffmpeg网页通信
     if (Message.Message == "catCatchFFmpeg") {
         const data = { ...Message, Message: "ffmpeg", tabId: Message.tabId ?? sender.tab.id, version: G.ffmpegConfig.version };
@@ -1080,49 +1113,9 @@ function isSpecialPage(url) {
 // chrome.declarativeNetRequest.getSessionRules(function (rules) { console.log(rules); });
 // chrome.tabs.query({}, function (tabs) { for (let item of tabs) { console.log(item.id); } });
 
-chrome.storage.onChanged.addListener(function (changes, namespace) {
-    if (chrome.runtime.lastError) {
-        console.error("CatCatch: Error in chrome.storage.onChanged:", chrome.runtime.lastError.message);
-        return;
-    }
-
-    for (let [key, { oldValue, newValue }] of Object.entries(changes)) {
-        // Handle autoCaptureEnabled change
-        if (key === "autoCaptureEnabled") {
-            G.autoCaptureEnabled = newValue; // Update global G
-            // console.log("CatCatch: autoCaptureEnabled changed to", G.autoCaptureEnabled);
-            const catchScript = G.scriptList.get("catch.js");
-            if (!catchScript) {
-                console.error("CatCatch: catch.js script info not found for storage change handling.");
-                return; // No need to return true here as it's not a message handler
-            }
-
-            if (G.autoCaptureEnabled) {
-                // Auto capture just turned ON. Iterate all tabs and apply logic.
-                chrome.tabs.query({}, function(tabs) {
-                    if (chrome.runtime.lastError) {
-                        console.error("CatCatch: Error querying tabs:", chrome.runtime.lastError.message);
-                        return;
-                    }
-                    for (const tab of tabs) {
-                        if (tab.id && tab.url) { // Ensure tab.url is present
-                            manageAutoCaptureForTab(tab.id, tab.url);
-                        }
-                    }
-                });
-            } else {
-                // Auto capture just turned OFF. Remove catch.js from all tabs where it's currently active in the scriptList.
-                const activeTabsCopy = new Set(catchScript.tabId); // Iterate over a copy
-                activeTabsCopy.forEach(tabIdToDisable => {
-                    catchScript.tabId.delete(tabIdToDisable);
-                    removeCatchScript(tabIdToDisable, catchScript);
-                });
-            }
-            // Notify popup to update button states if it's open
-            chrome.runtime.sendMessage({ Message: "buttonStateUpdated", affectedSetting: "autoCaptureEnabled" }).catch(e => {});
-        }
-
-        // Add other storage change handlers here if needed, e.g., for the original "use ffmpeg"
-        // if (key === "useRemoteFfmpegOption") { ... }
-    }
+// Initialize and attach listeners
+// Ensure this is the only top-level execution call for initialization logic.
+initializeBackground().catch(error => {
+    console.error("CatCatch: background.js - Unhandled error during initializeBackground:", error);
 });
+console.log("CatCatch: background.js - End of script execution path, initializeBackground() was invoked.");
