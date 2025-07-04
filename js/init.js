@@ -34,17 +34,21 @@ if (!chrome.sidePanel) {
 }
 
 // 简写翻译函数
-const i18n = new Proxy(chrome.i18n.getMessage, {
+export const i18n = new Proxy(chrome.i18n.getMessage, {
     get: function (target, key) {
-        return chrome.i18n.getMessage(key);
+        // Ensure chrome.i18n.getMessage is available before calling
+        if (chrome && chrome.i18n && typeof chrome.i18n.getMessage === 'function') {
+            return chrome.i18n.getMessage(key);
+        }
+        return key; // Fallback
     }
 });
 // 全局变量
-var G = {};
+export var G = {};
 G.initSyncComplete = false;
 G.initLocalComplete = false;
 // 缓存数据
-var cacheData = { init: true };
+export var cacheData = { init: true };
 G.blackList = new Set();    // 正则屏蔽资源列表
 G.blockUrlSet = new Set();    // 屏蔽网址列表
 G.requestHeaders = new Map();   // 临时储存请求头
@@ -209,22 +213,31 @@ G.streamSaverConfig = {
 }
 
 // 正则预编译
-const reFilename = /filename="?([^"]+)"?/;
-const reStringModify = /[<>:"\/\\|?*~]/g;
-const reFilterFileName = /[<>:"|?*~]/g;
-const reTemplates = /\${([^}|]+)(?:\|([^}]+))?}/g;
-const reJSONparse = /([{,]\s*)([\w-]+)(\s*:)/g;
+export const reFilename = /filename="?([^"]+)"?/;
+export const reStringModify = /[<>:"\/\\|?*~]/g;
+export const reFilterFileName = /[<>:"|?*~]/g;
+export const reTemplates = /\${([^}|]+)(?:\|([^}]+))?}/g;
+export const reJSONparse = /([{,]\s*)([\w-]+)(\s*:)/g;
 
 // 防抖
-let debounce = undefined;
-let debounceCount = 0;
-let debounceTime = 0;
+export let debounce = undefined;
+export let debounceCount = 0;
+export let debounceTime = 0;
 
 // Init
 // InitOptions(); // Will be called from background.js after it's defined.
 
+export function wildcardToRegex(urlPattern) {
+    if (!urlPattern) return new RegExp('$', 'i'); // Handle empty input
+    const regexPattern = String(urlPattern)
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape regex special chars
+        .replace(/\*/g, '.*') // Convert * to .*
+        .replace(/\?/g, '.');  // Convert ? to .
+    return new RegExp(`^${regexPattern}$`, 'i'); // Match whole string, case-insensitive
+}
+
 // 初始变量
-async function InitOptionsAsync() {
+export async function InitOptionsAsync() {
     console.log("CatCatch: init.js - InitOptionsAsync started");
     // 断开重新连接后 立刻把local里MediaData数据交给cacheData
     await new Promise(resolve => {
@@ -345,22 +358,8 @@ async function InitOptionsAsync() {
 // have been moved to background.js to be attached after initial G setup.
 
 // For ES Module export:
+// All exports are now inline with their definitions.
+// The block export previously here is no longer needed and has been removed.
 
-// All code, including console.log, must come BEFORE the export block.
-console.log("CatCatch: init.js - End of script, defining exports now.");
-
-export {
-    G,
-    InitOptionsAsync,
-    cacheData,
-    i18n,
-    reFilename,
-    reStringModify,
-    reFilterFileName,
-    reTemplates,
-    reJSONparse,
-    wildcardToRegex,
-    debounce,
-    debounceCount,
-    debounceTime
-};
+// Final log for the script (optional, as exports are inline)
+console.log("CatCatch: init.js - End of script, all definitions and exports processed.");

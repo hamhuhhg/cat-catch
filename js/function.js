@@ -1,9 +1,11 @@
+import { G } from './init.js'; // Import G for use within this module
+
 /**
  * 小于10的数字前面加0
  * @param {Number} date 
  * @returns {String|Number}
  */
-function appendZero(date) {
+export function appendZero(date) {
     return parseInt(date) < 10 ? `0${date}` : date;
 }
 
@@ -12,7 +14,7 @@ function appendZero(date) {
  * @param {Number} sec 
  * @returns {String}
  */
-function secToTime(sec) {
+export function secToTime(sec) {
     let hour = (sec / 3600) | 0;
     let min = ((sec % 3600) / 60) | 0;
     sec = (sec % 60) | 0;
@@ -27,7 +29,7 @@ function secToTime(sec) {
  * @param {Number} byte 大小
  * @returns {String} 格式化后的文件大小
  */
-function byteToSize(byte) {
+export function byteToSize(byte) {
     if (!byte || byte < 1024) { return 0; }
     if (byte < 1024 * 1024) {
         return (byte / 1024).toFixed(1) + "KB";
@@ -43,7 +45,7 @@ function byteToSize(byte) {
  * @param {String} url 
  * @param {String} fileName 文件名
  */
-function downloadDataURL(url, fileName) {
+export function downloadDataURL(url, fileName) {
     const link = document.createElement("a");
     link.href = url;
     link.download = fileName;
@@ -56,7 +58,7 @@ function downloadDataURL(url, fileName) {
  * @param {Object|String} obj 判断的变量
  * @returns {Boolean}
  */
-function isEmpty(obj) {
+export function isEmpty(obj) {
     return (typeof obj == "undefined" ||
         obj == null ||
         obj == "" ||
@@ -68,7 +70,7 @@ function isEmpty(obj) {
  * @param {Object} data 请求头数据
  * @param {Function} callback 
  */
-function setRequestHeaders(data = {}, callback = undefined) {
+export function setRequestHeaders(data = {}, callback = undefined) {
     chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [1] });
     chrome.tabs.getCurrent(function (tabs) {
         const rules = { removeRuleIds: [tabs ? tabs.id : 1] };
@@ -104,34 +106,8 @@ function setRequestHeaders(data = {}, callback = undefined) {
     });
 }
 
-// For ES Module export:
-// All functions are defined above this block.
-console.log("CatCatch: function.js - End of script, defining exports now.");
-export {
-    appendZero,
-    secToTime,
-    byteToSize,
-    downloadDataURL,
-    isEmpty,
-    setRequestHeaders,
-    setHeaders,
-    awaitG,
-    splitString,
-    templatesFunction,
-    templates,
-    getUrlFileName,
-    JSONparse,
-    ArrayBufferToBlob,
-    clearRedundant,
-    stringModify,
-    filterFileName,
-    flattenObject,
-    send2local,
-    isLockUrl,
-    closeTab,
-    openParser
-};
-// console.log("CatCatch: function.js - End of script"); // Removed for ES module, logging done in background.js
+// All functions are now exported inline.
+// The block export and its related console.log have been removed.
 
 /**
  * 指定标签页修改 urlFilter请求头
@@ -139,7 +115,7 @@ export {
  * @param {*} callBack 回调函数
  * @param {*} tabId 需要修改的tabId
  */
-function setHeaders(data, callBack, tabId = -1) {
+export function setHeaders(data, callBack, tabId = -1) {
     if (!tabId == -1) {
         tabId = G.tabId;
     }
@@ -177,7 +153,7 @@ function setHeaders(data, callBack, tabId = -1) {
  * @param {Function} callback 
  * @param {Number} sec
  */
-function awaitG(callback, sec = 0) {
+export function awaitG(callback, sec = 0) {
     const timer = setInterval(() => {
         if (G.initSyncComplete && G.initLocalComplete) {
             clearInterval(timer);
@@ -192,7 +168,7 @@ function awaitG(callback, sec = 0) {
  * @param {String} separator 分隔符
  * @returns {String} 返回分割后的字符串
  */
-function splitString(text, separator) {
+export function splitString(text, separator) {
     text = text.trim();
     if (text.length == 0) { return []; }
     const parts = [];
@@ -221,9 +197,9 @@ function splitString(text, separator) {
  * @param {Object} data 填充的数据
  * @returns {String} 返回处理后的字符串
  */
-function templatesFunction(text, action, data) {
-    text = isEmpty(text) ? "" : text.toString();
-    action = splitString(action, "|");
+export function templatesFunction(text, action, data) {
+    text = isEmpty(text) ? "" : text.toString(); // Assuming isEmpty is globally available or imported
+    action = splitString(action, "|"); // Assuming splitString is globally available or imported
     for (let item of action) {
         let action = item.trim();   // 函数
         let arg = [];   //参数
@@ -309,8 +285,8 @@ function templatesFunction(text, action, data) {
  * @param {Object} data 填充的数据
  * @returns {String} 返回填充后的字符串
  */
-function templates(text, data) {
-    if (isEmpty(text)) { return ""; }
+export function templates(text, data) {
+    if (isEmpty(text)) { return ""; } // Assumes isEmpty is in the same module or imported
     // fullFileName
     try {
         data.fullFileName = new URL(data.url).pathname.split("/").pop();
@@ -379,7 +355,7 @@ function templates(text, data) {
  * @param {String} url 
  * @returns {String} 文件名
  */
-function getUrlFileName(url) {
+export function getUrlFileName(url) {
     let pathname = new URL(url).pathname;
     let filename = pathname.split("/").pop();
     return filename ? filename : "NULL";
@@ -392,7 +368,7 @@ function getUrlFileName(url) {
  * @param {number} attempt 尝试修复次数
  * @returns {object} 返回解析后的对象
  */
-function JSONparse(str, error = {}, attempt = 0) {
+export function JSONparse(str, error = {}, attempt = 0) {
     if (!str) { return error; }
     try {
         return JSON.parse(str);
@@ -415,7 +391,7 @@ function JSONparse(str, error = {}, attempt = 0) {
  * @param {Object} options Blob配置
  * @returns {Blob} 返回Blob对象
  */
-function ArrayBufferToBlob(buffer, options = {}) {
+export function ArrayBufferToBlob(buffer, options = {}) {
     if (buffer instanceof Blob) {
         return buffer;
     }
@@ -447,7 +423,7 @@ function ArrayBufferToBlob(buffer, options = {}) {
 /**
  * 清理冗余数据
  */
-function clearRedundant() {
+export function clearRedundant() {
     chrome.tabs.query({}, function (tabs) {
         const allTabId = new Set(tabs.map(tab => tab.id));
 
@@ -526,9 +502,9 @@ function clearRedundant() {
  * @param {String} text 需要替换的文本
  * @returns {String} 返回替换后的字符串
  */
-function stringModify(str, text) {
+export function stringModify(str, text) {
     if (!str) { return str; }
-    str = filterFileName(str, text);
+    str = filterFileName(str, text); // Assumes filterFileName is in the same module or imported
     return str.replaceAll("\\", "&bsol;").replaceAll("/", "&sol;");
 }
 
@@ -538,9 +514,13 @@ function stringModify(str, text) {
  * @param {String} text 需要替换的文本
  * @returns {String} 返回替换后的字符串
  */
-function filterFileName(str, text) {
+const reFilterFileNameInternal = /[<>:"|?*~]/g; // Define locally to avoid import issues for now
+
+export function filterFileName(str, text) {
     if (!str) { return str; }
-    reFilterFileName.lastIndex = 0;
+    reFilterFileNameInternal.lastIndex = 0;
+    str = str.replaceAll(/\u200B/g, "").replaceAll(/\u200C/g, "").replaceAll(/\u200D/g, "");
+    str = str.replace(reFilterFileNameInternal, function (match) {
     str = str.replaceAll(/\u200B/g, "").replaceAll(/\u200C/g, "").replaceAll(/\u200D/g, "");
     str = str.replace(reFilterFileName, function (match) {
         return text || {
@@ -568,7 +548,7 @@ function filterFileName(str, text) {
  * @param {String} prefix 前缀
  * @returns 嵌套对象扁平化
  */
-function flattenObject(obj, prefix = '') {
+export function flattenObject(obj, prefix = '') {
     let result = {};
     for (const key in obj) {
         if (Object.prototype.hasOwnProperty.call(obj, key)) {
@@ -592,7 +572,7 @@ function flattenObject(obj, prefix = '') {
  * @param {Object|Srting} data 发送的数据
  * @param {Number} tabId 发送数据的标签页ID
  */
-function send2local(action, data, tabId = 0) {
+export function send2local(action, data, tabId = 0) {
     return new Promise((resolve, reject) => {
 
         // 请求方式
@@ -679,7 +659,15 @@ function send2local(action, data, tabId = 0) {
  * @param {String} url 
  * @returns {Boolean}
  */
-function isLockUrl(url) {
+export function isLockUrl(url) {
+    // This function relies on G.blockUrl.
+    // Ensure G is passed or accessible if this module is used independently.
+    // If function.js is only imported by background.js (which imports G from init.js),
+    // then background.js needs to make G available to these calls,
+    // or these functions need to accept G as a parameter.
+    // For now, assuming G will be available in the execution context.
+    if (!G || !G.blockUrl) return false;
+
     for (let key in G.blockUrl) {
         if (!G.blockUrl[key].state) { continue; }
         G.blockUrl[key].url.lastIndex = 0;
@@ -695,7 +683,7 @@ function isLockUrl(url) {
  * 当前只有一个标签页面 创建新标签页 再关闭
  * @param {Number|Array} tabId 
  */
-function closeTab(tabId = 0) {
+export function closeTab(tabId = 0) {
     chrome.tabs.query({}, async function (tabs) {
         if (tabs.length === 1) {
             await chrome.tabs.create({ url: 'chrome://newtab' });
@@ -711,8 +699,8 @@ function closeTab(tabId = 0) {
  * @param {Object} data 资源对象
  * @param {Object} options 选项
  */
-function openParser(data, options = {}) {
-    chrome.tabs.get(G.tabId, function (tab) {
+export function openParser(data, options = {}) {
+    chrome.tabs.get(G.tabId, function (tab) { // Assumes G is available via import from init.js
         const url = `/${data.parsing ? data.parsing : "m3u8"}.html?${new URLSearchParams({
             url: data.url,
             title: data.title,
